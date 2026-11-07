@@ -6,7 +6,9 @@ Read this completely before your own brief.
 
 `nsh-secure-storage` is the Native Shell (NSH) version of [`flutter_secure_storage`](https://github.com/juliansteenbakker/flutter_secure_storage) 11.2.0: one API over each platform's own secret store, in Rust and TypeScript. The owner's instruction: use all the latest dependencies, and go through all the upstream issues and pull requests to see which we can fix.
 
-Repo: `~/fo/nsh-secure-storage`, branch `master`, remote `SuperNSH/secure-storage`. Run no git command. The agent that started you checks, commits and pushes. Edit only the paths your brief names, because other agents work in this repo at the same time. Do not stop to ask questions: decide, write the decision in `docs/decisions.md`, and continue.
+Repo: `~/fo/nsh-secure-storage`, branch `master`, remote `SuperNSH/secure-storage`. Edit only the paths your brief names, because other agents work in this repo at the same time.
+
+**Commit small, and often.** After each small change whose tests pass, commit it to `master`: `git add <the paths you changed>`, never `git add -A`, because other agents share this checkout. Then `git commit -m "..."` with a short conventional message, such as `feat(apple): map errSecInteractionNotAllowed to LOCKED`. No attribution lines of any kind. If `index.lock` blocks you, wait a moment and retry. Use no other git command that changes anything, and do not push: the agent that started you checks and pushes. Do not stop to ask questions: decide, write the decision in `docs/decisions.md`, and continue.
 
 ## References, all read-only
 
@@ -42,7 +44,7 @@ Other agents use the booted simulator named `nsh-auth` and the emulator `emulato
 1. A value never reaches a log, an error message, a panic, a `Debug` output or a test failure message. Errors carry a `code` and the key's name at most. Keep values in `zeroize::Zeroizing` inside Rust.
 2. A value is never written to disk unencrypted, on any platform.
 3. **Never delete or replace a key because of a transient error.** Only an explicit, permanent signal (Android's `KeyPermanentlyInvalidatedException`, a failed AEAD tag) may lead to data loss, and only when the caller opted in with `reset_on_error`. Its default is `false`, unlike upstream, because silently losing a user's data is worse than reporting an error. Note this difference.
-4. Tests never touch the user's own login keychain, keyring or Credential Manager. On macOS they use a throwaway keychain file made in a temp folder. Never read, enter or print a real credential.
+4. Tests never touch the user's own login keychain, keyring or Credential Manager. On macOS they use a throwaway keychain file made in a temp folder. Never read, enter or print a real credential. **No test may ever open a system dialog**: a person is using this machine, and a password prompt from a test looks like a request for their Mac password. Turn keychain user interaction off for the whole test process, run with a short `timeout`, and treat a new `SecurityAgent` process as a failure.
 5. Say plainly in the docs what each platform protects against. The web has no real secret store, and the docs must say so.
 
 ## NSH's state standards
@@ -60,7 +62,7 @@ Other agents use the booted simulator named `nsh-auth` and the emulator `emulato
 
 ## Latest dependencies
 
-Use the newest stable version of every direct dependency, as of 2026-11-07, checked on crates.io when you add it. Measured then: `security-framework` 3.7.0, `jni` 0.22.4, `windows` 0.62.2, `oo7` 0.7.0, `aes-gcm` 0.11.1, `zeroize` 1.9.1, `thiserror` 2.0.21, `serde` 1.0.229, `serde_json` 1.0.154, `base64` 0.23.1, `getrandom` 0.4.3. If a newer version is out, use it. If one cannot be used, say why in `docs/decisions.md`. NSH itself depends on `jni` 0.21, and a second version in the tree is fine.
+Reuse existing crates where they do the job, and write our own only where they fall short. `docs/decisions.md` records which and why. Use the newest stable version of every direct dependency, as of 2026-11-07, checked on crates.io when you add it. Measured then: `security-framework` 3.7.0, `jni` 0.22.4, `keyring-core` 1.0.1, `windows-native-keyring-store` 1.1.0, `zbus-secret-service-keyring-store` 1.0.1, `aes-gcm` 0.11.1, `zeroize` 1.9.1, `thiserror` 2.0.21, `serde` 1.0.229, `serde_json` 1.0.154, `base64` 0.23.1, `getrandom` 0.4.3. If a newer version is out, use it. If one cannot be used, say why in `docs/decisions.md`. NSH itself depends on `jni` 0.21, and a second version in the tree is fine.
 
 ## Code and tests
 

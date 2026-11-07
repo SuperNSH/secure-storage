@@ -7,5 +7,30 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+[lib]
+name = "nsh_secure_storage"
+path = "src/lib.rs"
+
 [dependencies]
 nsh-core = "0.4.0"
+tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
+zeroize = "1.9.1"
+
+# Apple's Keychain, on the two Apple OSes this crate supports. Each backend's
+# dependencies sit under its own target table, so other platforms do not build them.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+security-framework = "3.7.0"
+security-framework-sys = "2.17.0"
+core-foundation = "0.10.1"
+core-foundation-sys = "0.8.7"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2-foundation = "0.3.2"
+objc2-ui-kit = "0.3.2"
+block2 = "0.6.2"
+
+[dev-dependencies]
+nsh-engine = { version = "0.4.0", default-features = false }
+nsh-testing = { version = "0.4.0", default-features = false }
+# Gives the Keychain tests the blocking pool that `nsh_core::blocking` uses inside an engine.
+tokio = { version = "1.54.1", default-features = false, features = ["rt"] }

@@ -6,6 +6,8 @@ use core_foundation::string::CFStringRef;
 
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
+    /// `SecKeychainGetStatus`: reports the keychain's state bits. Deprecated, but the file keychain has no other call for it.
+    pub fn SecKeychainGetStatus(keychain: *const std::ffi::c_void, status: *mut u32) -> OSStatus;
     pub static kSecAttrAccessible: CFStringRef;
     pub static kSecAttrIsInvisible: CFStringRef;
     pub static kSecAttrIsNegative: CFStringRef;
@@ -34,3 +36,6 @@ pub const ERR_SEC_INTERACTION_NOT_ALLOWED: OSStatus = -25308;
 pub const ERR_SEC_DECODE: OSStatus = -26275;
 /// `errSecMissingEntitlement`.
 pub const ERR_SEC_MISSING_ENTITLEMENT: OSStatus = -34018;
+
+/// `kSecUnlockStateStatus`: set while the keychain is unlocked.
+pub const K_SEC_UNLOCK_STATE_STATUS: u32 = 1;

@@ -98,6 +98,10 @@ impl Spec {
         if apple.use_secure_enclave {
             return Err(SecureStorageError::new(ErrorKind::NotAvailable));
         }
+        // The file keychain refuses access control (`errSecParam`), so it is refused here by name.
+        if keychain_file.is_some() && !apple.access_control_flags.is_empty() {
+            return Err(SecureStorageError::new(ErrorKind::NotAvailable));
+        }
         Ok(Self {
             service: apple.account_name.clone(),
             group: apple.group_id.clone(),
@@ -153,6 +157,7 @@ fn no_prompt_guard(spec: &Spec) -> Option<super::prompt::NoPrompt> {
 pub(crate) fn write(spec: &Spec, key: &str, value: &str) -> Result<(), SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
     let keychain = open_keychain(spec)?;
+    ensure_unlocked(spec, keychain.as_ref())?;
     let data = CFData::from_buffer(value.as_bytes());
 
     let search = search_query(spec, keychain.as_ref(), key);
@@ -186,6 +191,7 @@ pub(crate) fn read(
 ) -> Result<Option<Zeroizing<String>>, SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
     let keychain = open_keychain(spec)?;
+    ensure_unlocked(spec, keychain.as_ref())?;
     let mut query = search_query(spec, keychain.as_ref(), key);
     put(&mut query, sec!(kSecReturnData), bool_value(true));
     put(&mut query, sec!(kSecMatchLimit), constant(sec!(kSecMatchLimitOne)));
@@ -207,6 +213,7 @@ pub(crate) fn read(
 pub(crate) fn contains_key(spec: &Spec, key: &str) -> Result<bool, SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
     let keychain = open_keychain(spec)?;
+    ensure_unlocked(spec, keychain.as_ref())?;
     let mut query = search_query(spec, keychain.as_ref(), key);
     put(&mut query, sec!(kSecMatchLimit), constant(sec!(kSecMatchLimitOne)));
     match copy_matching(&query, None) {
@@ -220,6 +227,7 @@ pub(crate) fn contains_key(spec: &Spec, key: &str) -> Result<bool, SecureStorage
 pub(crate) fn delete(spec: &Spec, key: &str) -> Result<(), SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
     let keychain = open_keychain(spec)?;
+    ensure_unlocked(spec, keychain.as_ref())?;
     let query = search_query(spec, keychain.as_ref(), key);
     match delete_item(&query) {
         0 | ERR_SEC_ITEM_NOT_FOUND => Ok(()),
@@ -227,16 +235,14 @@ pub(crate) fn delete(spec: &Spec, key: &str) -> Result<(), SecureStorageError> {
     }
 }
 
-/// Every item of the service, in key order, at most `result_limit` of them.
-pub(crate) fn read_all(
-    spec: &Spec,
-) -> Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError> {
+/// The account names of the service's items, at most `result_limit` of them.
+fn list_accounts(spec: &Spec) -> Result<Vec<String>, SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
     let keychain = open_keychain(spec)?;
+    ensure_unlocked(spec, keychain.as_ref())?;
     let mut query = scope(spec, keychain.as_ref(), Purpose::Search);
     apply_authentication(spec, &mut query);
     put(&mut query, sec!(kSecReturnAttributes), bool_value(true));
-    put(&mut query, sec!(kSecReturnData), bool_value(true));
     let limit = match spec.result_limit {
         Some(n) => CFNumber::from(i64::try_from(n).unwrap_or(i64::MAX)).into_CFType(),
         None => constant(sec!(kSecMatchLimitAll)),
@@ -244,53 +250,65 @@ pub(crate) fn read_all(
     put(&mut query, sec!(kSecMatchLimit), limit);
 
     let mut found: CFTypeRef = ptr::null();
-    match copy_matching(&query, Some(&mut found)) {
-        0 => {}
-        ERR_SEC_ITEM_NOT_FOUND => return Ok(BTreeMap::new()),
+    let accounts = match copy_matching(&query, Some(&mut found)) {
+        0 => {
+            // SAFETY: a successful SecItemCopyMatching returns a retained reference the caller owns.
+            let found = unsafe { CFType::wrap_under_create_rule(found) };
+            let items = found
+                .downcast_into::<CFArray>()
+                .ok_or_else(|| SecureStorageError::new(ErrorKind::Backend))?;
+            // SAFETY: the array was just checked to be a CFArray, and it outlives this borrow.
+            let items: CFArray<CFType> =
+                unsafe { CFArray::wrap_under_get_rule(items.as_concrete_TypeRef()) };
+            let mut accounts = Vec::new();
+            for item in items.iter() {
+                let Some(item) = item.downcast::<CFDictionary>() else {
+                    continue;
+                };
+                // SAFETY: the dictionary was just checked to be a CFDictionary.
+                let item: CFDictionary<CFType, CFType> =
+                    unsafe { CFDictionary::wrap_under_get_rule(item.as_concrete_TypeRef()) };
+                if let Some(account) = item
+                    .find(&constant(sec!(kSecAttrAccount)))
+                    .and_then(|account| account.downcast::<CFString>())
+                {
+                    accounts.push(account.to_string());
+                }
+            }
+            accounts
+        }
+        ERR_SEC_ITEM_NOT_FOUND => Vec::new(),
         status => return Err(from_status(status)),
-    }
-    // SAFETY: a successful SecItemCopyMatching returns a retained reference the caller owns.
-    let found = unsafe { CFType::wrap_under_create_rule(found) };
-    let items = found
-        .downcast_into::<CFArray>()
-        .ok_or_else(|| SecureStorageError::new(ErrorKind::Backend))?;
-    // SAFETY: the array is the one just checked to be a CFArray, and it outlives this borrow.
-    let items: CFArray<CFType> = unsafe { CFArray::wrap_under_get_rule(items.as_concrete_TypeRef()) };
+    };
+
+    Ok(accounts)
+}
+
+/// Every item of the service, in key order, at most `result_limit` of them. The accounts are
+/// listed first, then each value is read on its own: one query cannot return attributes, data
+/// and every match together on a file keychain (`errSecParam`).
+pub(crate) fn read_all(
+    spec: &Spec,
+) -> Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError> {
+    let accounts = list_accounts(spec)?;
 
     let mut all = BTreeMap::new();
-    for item in items.iter() {
-        let Some(item) = item.downcast::<CFDictionary>() else {
-            continue;
-        };
-        // SAFETY: the dictionary is the one just checked to be a CFDictionary.
-        let item: CFDictionary<CFType, CFType> =
-            unsafe { CFDictionary::wrap_under_get_rule(item.as_concrete_TypeRef()) };
-        let account = item
-            .find(&constant(sec!(kSecAttrAccount)))
-            .and_then(|account| account.downcast::<CFString>())
-            .map(|account| account.to_string());
-        let data = item
-            .find(&constant(sec!(kSecValueData)))
-            .and_then(|data| data.downcast::<CFData>());
-        let (Some(account), Some(data)) = (account, data) else {
-            continue;
-        };
-        let value = decode(data.bytes(), &account)?;
-        all.insert(account, value);
+    for account in accounts {
+        if let Some(value) = read(spec, &account)? {
+            all.insert(account, value);
+        }
     }
     Ok(all)
 }
 
-/// Removes every item of the service, and nothing of any other service.
+/// Removes every item of the service, and nothing of any other service. Each account is deleted
+/// on its own: one `SecItemDelete` with no account removed only the first match on a file keychain.
 pub(crate) fn delete_all(spec: &Spec) -> Result<(), SecureStorageError> {
     let _no_prompt = no_prompt_guard(spec);
-    let keychain = open_keychain(spec)?;
-    let mut query = scope(spec, keychain.as_ref(), Purpose::Search);
-    apply_authentication(spec, &mut query);
-    match delete_item(&query) {
-        0 | ERR_SEC_ITEM_NOT_FOUND => Ok(()),
-        status => Err(from_status(status)),
+    for account in list_accounts(spec)? {
+        delete(spec, &account)?;
     }
+    Ok(())
 }
 
 /// How an attribute set is used: `Add` writes every attribute, `Update` only those that may change.
@@ -449,6 +467,29 @@ fn decode(bytes: &[u8], key: &str) -> Result<Zeroizing<String>, SecureStorageErr
 type SecKeychainHandle = security_framework::os::macos::keychain::SecKeychain;
 #[cfg(not(target_os = "macos"))]
 type SecKeychainHandle = ();
+
+/// With `Fail` or `Skip`, a locked file keychain is reported as `Locked` rather than asked to unlock.
+#[cfg(target_os = "macos")]
+fn ensure_unlocked(spec: &Spec, keychain: Option<&SecKeychainHandle>) -> Result<(), SecureStorageError> {
+    let (Some(keychain), Some(AuthenticationUi::Fail | AuthenticationUi::Skip)) = (keychain, spec.auth_ui) else {
+        return Ok(());
+    };
+    let mut state: u32 = 0;
+    // SAFETY: the keychain reference is alive for the call, and the state is written only through `state`.
+    let code = unsafe { super::sys::SecKeychainGetStatus(keychain.as_concrete_TypeRef() as _, &mut state) };
+    if code != 0 {
+        return Err(from_status(code));
+    }
+    if state & super::sys::K_SEC_UNLOCK_STATE_STATUS == 0 {
+        return Err(from_status(super::sys::ERR_SEC_INTERACTION_NOT_ALLOWED));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn ensure_unlocked(_spec: &Spec, _keychain: Option<&SecKeychainHandle>) -> Result<(), SecureStorageError> {
+    Ok(())
+}
 
 /// Opens the keychain file the spec names, on macOS. Elsewhere there is no file keychain.
 #[cfg(target_os = "macos")]

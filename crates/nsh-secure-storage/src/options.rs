@@ -202,7 +202,8 @@ impl Default for MacOsOptions {
     }
 }
 
-/// Android options. The Android backend reads them when it lands.
+/// Android options. The Keystore key is AES-256-GCM. Upstream's cipher choices are not offered:
+/// there is one cipher, so there is nothing to choose.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AndroidOptions {
@@ -211,6 +212,9 @@ pub struct AndroidOptions {
     pub reset_on_error: bool,
     /// Requires a biometric check before each use of the key.
     pub enforce_biometrics: bool,
+    /// Keeps the key in StrongBox, the separate secure chip. A device without one returns
+    /// `NotAvailable`; nothing falls back silently.
+    pub require_strong_box: bool,
     /// Asks for a biometric check on each operation, not once per session.
     pub require_biometrics_per_operation: bool,
     /// Which biometric or credential types the prompt accepts.
@@ -232,6 +236,7 @@ impl Default for AndroidOptions {
         Self {
             reset_on_error: false,
             enforce_biometrics: false,
+            require_strong_box: false,
             require_biometrics_per_operation: false,
             biometric_type: AndroidBiometricType::default(),
             require_biometric_confirmation: true,

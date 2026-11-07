@@ -4,6 +4,8 @@
 //! so the engine thread never waits on the platform. [`use_secure_value`] reads one key as a
 //! reactive value that follows the writes made through the same store.
 
+#[cfg(test)]
+mod android;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple;
 mod backend;

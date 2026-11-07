@@ -30,8 +30,21 @@ objc2-foundation = "0.3.2"
 objc2-ui-kit = "0.3.2"
 block2 = "0.6.2"
 
+# Android's Keystore, over JNI. The store file and its JSON are plain Rust; the Keystore does the AES.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22.4"
+libc = "0.2.191"
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+
 [dev-dependencies]
 nsh-engine = { version = "0.4.0", default-features = false }
 nsh-testing = { version = "0.4.0", default-features = false }
 # Gives the Keychain tests the blocking pool that `nsh_core::blocking` uses inside an engine.
 tokio = { version = "1.54.1", default-features = false, features = ["rt"] }
+# The host tests run the Android store logic against a fake Keystore that really seals with AES-GCM.
+aes-gcm = "0.11.1"
+base64 = "0.23.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

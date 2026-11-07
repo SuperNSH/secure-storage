@@ -32,7 +32,9 @@ public enum SecureStorageHost {
     /// Runs the handler `name` with the call's `data`, and returns its JSON answer.
     public static func handle(_ name: String, data: Any?) throws -> Any? {
         let call = data as? [String: Any] ?? [:]
-        let store = Store(options: call["options"] as? [String: Any] ?? [:])
+        let options = call["options"] as? [String: Any] ?? [:]
+        try refuseUnsupported(options["ios"] as? [String: Any] ?? [:])
+        let store = Store(options: options)
         switch name {
         case "secureStorage.read":
             let key = try keyOf(call)
@@ -54,6 +56,20 @@ public enum SecureStorageHost {
             return ["available": UIApplication.shared.isProtectedDataAvailable]
         default:
             throw SecureStorageHostError(code: "ERR_SECURE_STORAGE_NOT_AVAILABLE", detail: "unknown handler")
+        }
+    }
+
+    /// Options this host does not build are refused, never ignored: an ignored access control flag
+    /// would store the value with less protection than the caller asked for.
+    private static func refuseUnsupported(_ ios: [String: Any]) throws {
+        let flags = ios["accessControlFlags"] as? [String] ?? []
+        let unsupported = !flags.isEmpty
+            || ios["groupId"] as? String != nil
+            || (ios["authenticationUI"] as? String).map { $0 != "fail" && $0 != "skip" } ?? false
+        if unsupported {
+            throw SecureStorageHostError(
+                code: "ERR_SECURE_STORAGE_NOT_AVAILABLE",
+                detail: "this host builds no access control, access group or prompt; remove those options")
         }
     }
 

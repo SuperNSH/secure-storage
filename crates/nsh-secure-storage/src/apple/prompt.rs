@@ -45,3 +45,44 @@ fn set_interaction(allowed: bool) {
         security_framework_sys::keychain::SecKeychainSetUserInteractionAllowed(u8::from(allowed));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Barrier};
+
+    use security_framework::os::macos::keychain::SecKeychain;
+
+    use super::NoPrompt;
+
+    /// Overlapping guards on several threads: while any guard lives interaction is off, and once
+    /// they all drop the setting is the one saved before the first.
+    #[test]
+    fn concurrent_no_prompt_guards_restore_interaction() {
+        let before = SecKeychain::user_interaction_allowed().expect("the state is readable");
+        let barrier = Arc::new(Barrier::new(8));
+        let workers: Vec<_> = (0..8)
+            .map(|_| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..200 {
+                        let guard = NoPrompt::enter();
+                        assert!(
+                            !SecKeychain::user_interaction_allowed().unwrap_or(true),
+                            "interaction is off while a guard lives"
+                        );
+                        drop(guard);
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("a worker finishes");
+        }
+        assert_eq!(
+            SecKeychain::user_interaction_allowed().expect("the state is readable"),
+            before,
+            "the setting is restored after the last guard"
+        );
+    }
+}

@@ -130,3 +130,23 @@ impl Backend for AppleBackend {
         protected::subscribe(listener)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// Every Keychain call goes through `run`, so its work must leave the engine's thread.
+    #[test]
+    fn backend_calls_run_off_engine_thread() {
+        let engine_thread = std::thread::current().id();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime for the blocking pool");
+        let ran_on = runtime
+            .block_on(super::run(|| std::thread::current().id()))
+            .expect("the work finishes");
+        assert_ne!(
+            ran_on, engine_thread,
+            "Keychain work ran on the engine thread"
+        );
+    }
+}

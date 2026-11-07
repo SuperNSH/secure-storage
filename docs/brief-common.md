@@ -35,6 +35,10 @@ Never invent an API. Look the name up in the source for the installed version.
 - Tests: `Headless` on a manual clock in Rust. `open("../App.tsx", { clock: {} })` in TSX. `If` and `Each` are TSX globals. `nsh check` and `nsh build` catch different things, so run both.
 - A component's signals are already disposed when its `cleanup` runs, so reading one there panics.
 
+## No builds on this machine
+
+The owner's rule, which replaces every local build, test, Docker, emulator and simulator step in these briefs: compile and test on GitHub Actions. Commit, push, and read the results with `gh run view`.
+
 ## This machine is shared
 
 Other agents use the booted simulator named `nsh-auth` and the emulator `emulator-5556`. Do not touch, reset or shut them down. Make your own: `xcrun simctl create nsh-secure-ios ...`, and `avdmanager create avd -n nsh-secure ...` with your own console port. Stop only what you started.

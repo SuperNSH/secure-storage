@@ -6,7 +6,7 @@ Read this completely before your own brief.
 
 `nsh-secure-storage` is the Native Shell (NSH) version of [`flutter_secure_storage`](https://github.com/juliansteenbakker/flutter_secure_storage) 11.2.0: one API over each platform's own secret store, in Rust and TypeScript. The owner's instruction: use all the latest dependencies, and go through all the upstream issues and pull requests to see which we can fix.
 
-Repo: `~/fo/nsh-secure-storage`, branch `master`, remote `SuperNSH/nsh-secure-storage`. Run no git command. The agent that started you checks, commits and pushes. Edit only the paths your brief names, because other agents work in this repo at the same time. Do not stop to ask questions: decide, write the decision in `docs/decisions.md`, and continue.
+Repo: `~/fo/nsh-secure-storage`, branch `master`, remote `SuperNSH/secure-storage`. Run no git command. The agent that started you checks, commits and pushes. Edit only the paths your brief names, because other agents work in this repo at the same time. Do not stop to ask questions: decide, write the decision in `docs/decisions.md`, and continue.
 
 ## References, all read-only
 

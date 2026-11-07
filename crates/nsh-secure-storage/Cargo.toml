@@ -1,0 +1,11 @@
+[package]
+name = "nsh-secure-storage"
+description = "Secure key-value storage for Native Shell apps, backed by each platform's own secret store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+nsh-core = "0.4.0"

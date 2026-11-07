@@ -1,0 +1,8 @@
+{
+  "name": "Secure storage demo (Rust)",
+  "id": "dev.supernsh.secure-storage.demo-rs",
+  "version": "0.1.0",
+  "build": 1,
+  "rust": "../../crates/nsh-secure-storage",
+  "capabilities": {}
+}

@@ -259,31 +259,63 @@ pub enum AndroidBiometricType {
     BiometricOrDeviceCredential,
 }
 
-/// Windows options. The Windows backend reads them when it lands.
+/// Windows options. Each app's values and Credential Manager key are its own: the app identity
+/// names both, so two apps never read each other's values.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WindowsOptions {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowsOptions {
+    /// The app's identity. `None` reads the app id NSH sets for the process (its
+    /// AppUserModelID, which is `nsh.json`'s `id`). Set it when the process has none.
+    pub app_id: Option<String>,
+    /// The store's name. Stores with different names never share a value.
+    pub account_name: String,
+}
 
-/// Linux options. The Linux backend reads them when it lands.
+impl Default for WindowsOptions {
+    fn default() -> Self {
+        Self {
+            app_id: None,
+            account_name: "nsh_secure_storage".to_owned(),
+        }
+    }
+}
+
+/// Linux options. The store is one Secret Service namespace per user, so apps on one desktop
+/// account that keep the default name share it: give each app its own name.
 #[non_exhaustive]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LinuxOptions {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinuxOptions {
+    /// The store's name: the Secret Service `service` attribute every item carries.
+    pub account_name: String,
+}
 
-/// Web options. The web backend reads them when it lands.
-///
-/// The web has no secret store. Its key lives in the page's own database, so a script on the
-/// page can read what the page can read. The docs of the web backend say so plainly.
+impl Default for LinuxOptions {
+    fn default() -> Self {
+        Self {
+            account_name: "nsh_secure_storage".to_owned(),
+        }
+    }
+}
+
+/// Web options. The web has no secret store: the key lives in the page's own IndexedDB, so a
+/// script on the page can use it (it cannot export it). See the "Web backend" section of `docs/decisions.md`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebOptions {
-    /// The name of the IndexedDB database the data lives in.
+    /// The IndexedDB database the data lives in. It is also the store's name: stores with
+    /// different names are isolated, and `delete_all` touches only this one.
     pub db_name: String,
+    /// Upstream's `useSessionStorage`, for data that lasts only as long as the tab. Not supported:
+    /// a key in IndexedDB outlives the tab. When `true`, every call fails with
+    /// `ERR_SECURE_STORAGE_NOT_AVAILABLE`, and nothing is stored under another mode.
+    pub use_session_storage: bool,
 }
 
 impl Default for WebOptions {
     fn default() -> Self {
         Self {
             db_name: "nsh_secure_storage".to_owned(),
+            use_session_storage: false,
         }
     }
 }

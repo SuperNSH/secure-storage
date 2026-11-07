@@ -10,6 +10,8 @@ pub enum ErrorKind {
     Locked,
     /// The platform cannot do what was asked here (no store, or an option not built yet).
     NotAvailable,
+    /// The page is not a secure context, so the web's crypto is missing. Opened over HTTPS or on localhost, it works.
+    InsecureContext,
     /// The platform's key for this data was permanently invalidated.
     KeyInvalidated,
     /// Stored data cannot be decoded, or failed its integrity check.
@@ -83,7 +85,9 @@ impl SecureStorageError {
     pub fn code(&self) -> &'static str {
         match self.kind {
             ErrorKind::Locked => "ERR_SECURE_STORAGE_LOCKED",
-            ErrorKind::NotAvailable => "ERR_SECURE_STORAGE_NOT_AVAILABLE",
+            ErrorKind::NotAvailable | ErrorKind::InsecureContext => {
+                "ERR_SECURE_STORAGE_NOT_AVAILABLE"
+            }
             ErrorKind::KeyInvalidated => "ERR_SECURE_STORAGE_KEY_INVALIDATED",
             ErrorKind::KeyMissing => "ERR_SECURE_STORAGE_KEY_MISSING",
             ErrorKind::Corrupt => "ERR_SECURE_STORAGE_CORRUPT",
@@ -102,6 +106,9 @@ impl SecureStorageError {
             ErrorKind::Locked => "The store is locked. Unlock the device and try again.",
             ErrorKind::NotAvailable => {
                 "This platform cannot do this here. Check the options and the platform's support."
+            }
+            ErrorKind::InsecureContext => {
+                "A secure context is required: open the page over HTTPS, or on localhost."
             }
             ErrorKind::KeyInvalidated => {
                 "The key for this data was invalidated, so the data cannot be read. Delete the key and write it again."

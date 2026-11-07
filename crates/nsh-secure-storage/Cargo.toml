@@ -38,6 +38,34 @@ base64 = "0.23.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
+# The web backend: WebCrypto and IndexedDB, on the wasm32 target only. The versions are the ones
+# NSH 0.4.0 links, because `nsh` runs the wasm-bindgen CLI of the same version (docs/decisions.md).
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4.79"
+js-sys = "0.3.106"
+web-sys = { version = "0.3.106", features = [
+    "AesGcmParams",
+    "AesKeyGenParams",
+    "Crypto",
+    "CryptoKey",
+    "DomException",
+    "DomStringList",
+    "Event",
+    "IdbDatabase",
+    "IdbFactory",
+    "IdbKeyRange",
+    "IdbObjectStore",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbVersionChangeEvent",
+    "SubtleCrypto",
+    "Window",
+    "console",
+] }
+
 [dev-dependencies]
 nsh-engine = { version = "0.4.0", default-features = false }
 nsh-testing = { version = "0.4.0", default-features = false }
@@ -48,3 +76,30 @@ aes-gcm = "0.11.1"
 base64 = "0.23.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+
+# The Windows and Linux backends and their mock-store tests build on every host, so these are not
+# target-gated. wasm32 has no entropy source here, and the web backend has its own.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+aes-gcm = "0.11.1"
+base64 = "0.23.1"
+getrandom = "0.4.3"
+keyring-core = "1.0.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+
+# Credential Manager, and the Win32 call that reads the app's identity (its AppUserModelID).
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = "1.1.0"
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+] }
+
+# The Secret Service. The sync API runs on any thread, so it uses async-io, not a tokio handle.
+# `secret-service` is named so its errors can be told apart (locked, no service, prompt dismissed).
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = "5.2.0"
+zbus = "5.19.0"
+zbus-secret-service-keyring-store = { version = "1.0.1", default-features = false, features = ["rt-async-io-crypto-rust"] }

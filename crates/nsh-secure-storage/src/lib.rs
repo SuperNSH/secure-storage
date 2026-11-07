@@ -10,13 +10,27 @@ mod android;
 mod apple;
 mod backend;
 mod error;
+#[cfg(not(target_arch = "wasm32"))]
+mod keyring_store;
+#[cfg(not(target_arch = "wasm32"))]
+mod linux;
 mod memory;
 mod native;
 mod options;
 mod reactive;
 mod store;
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "linux",
+    target_os = "android",
+    target_arch = "wasm32"
+)))]
 mod unsupported;
+#[cfg(target_arch = "wasm32")]
+mod web;
+#[cfg(not(target_arch = "wasm32"))]
+mod windows;
 
 pub use backend::{Backend, BackendFuture};
 pub use error::{ErrorKind, SecureStorageError};
@@ -30,7 +44,13 @@ pub use options::{
 pub use reactive::{SecureValue, SecureValueState, use_secure_value};
 pub use store::{SecureStorage, Subscription};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use linux::LinuxBackend;
 pub use native::{NativeSecureStorage, StoreOptions, StoredEntry};
+#[cfg(target_arch = "wasm32")]
+pub use web::WebBackend;
+#[cfg(not(target_arch = "wasm32"))]
+pub use windows::WindowsBackend;
 
 use nsh_core::prelude::*;
 

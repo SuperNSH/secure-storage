@@ -377,7 +377,31 @@ fn platform_backend() -> Arc<dyn Backend> {
     {
         Arc::new(crate::android::AndroidBackend::new())
     }
-    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
+    #[cfg(target_arch = "wasm32")]
+    {
+        Arc::new(crate::web::WebBackend)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // A failed start (no Credential Manager) answers every call with a coded error.
+        let backend: Arc<dyn Backend> = match crate::windows::WindowsBackend::system() {
+            Ok(backend) => Arc::new(backend),
+            Err(_) => Arc::new(crate::unsupported::UnsupportedBackend),
+        };
+        backend
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Arc::new(crate::linux::LinuxBackend::system())
+    }
+    #[cfg(not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_arch = "wasm32",
+        target_os = "windows",
+        target_os = "linux",
+        target_os = "android"
+    )))]
     {
         Arc::new(crate::unsupported::UnsupportedBackend)
     }

@@ -22,3 +22,58 @@ pub(crate) fn from_status(status: OSStatus) -> SecureStorageError {
     };
     SecureStorageError::new(kind).with_status(status)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::from_status;
+    use crate::error::ErrorKind;
+
+    /// Each Keychain status, with the kind and the code it must map to.
+    #[test]
+    fn apple_status_mapping_table() {
+        let table = [
+            (-25308, ErrorKind::Locked, "ERR_SECURE_STORAGE_LOCKED"),
+            (
+                -34018,
+                ErrorKind::MissingEntitlement,
+                "ERR_SECURE_STORAGE_MISSING_ENTITLEMENT",
+            ),
+            (
+                -128,
+                ErrorKind::AuthCancelled,
+                "ERR_SECURE_STORAGE_AUTH_CANCELLED",
+            ),
+            (
+                -25293,
+                ErrorKind::AuthFailed,
+                "ERR_SECURE_STORAGE_AUTH_FAILED",
+            ),
+            (-26275, ErrorKind::Corrupt, "ERR_SECURE_STORAGE_CORRUPT"),
+            (
+                -25291,
+                ErrorKind::NotAvailable,
+                "ERR_SECURE_STORAGE_NOT_AVAILABLE",
+            ),
+            (
+                -25294,
+                ErrorKind::NotAvailable,
+                "ERR_SECURE_STORAGE_NOT_AVAILABLE",
+            ),
+            (-25299, ErrorKind::Backend, "ERR_SECURE_STORAGE_BACKEND"),
+        ];
+        for (status, kind, code) in table {
+            let error = from_status(status);
+            assert_eq!(error.kind(), kind, "status {status}");
+            assert_eq!(error.code(), code, "status {status}");
+            assert_eq!(
+                error.status(),
+                Some(status),
+                "the status is kept on the error"
+            );
+            assert!(
+                !error.message().contains("status"),
+                "the message names no number"
+            );
+        }
+    }
+}

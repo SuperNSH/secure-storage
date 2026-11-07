@@ -58,10 +58,10 @@ pub struct PlatformOptions {
 pub enum KeychainAccessibility {
     /// Only while the device has a passcode and is unlocked. Never migrates to another device.
     Passcode,
-    /// Only while the device is unlocked. This is the default.
-    #[default]
+    /// Only while the device is unlocked. Migrates to a new device with the backup.
     Unlocked,
-    /// Only while unlocked. Never migrates to another device.
+    /// Only while unlocked. Never migrates to another device. This is the default.
+    #[default]
     UnlockedThisDevice,
     /// After the first unlock since boot.
     FirstUnlock,

@@ -10,7 +10,7 @@ use std::{
 };
 
 use nsh_secure_storage::{
-    Backend, BackendFuture, ErrorKind, MemoryBackend, ReadOptions, SecureStorage,
+    AndroidOptions, Backend, BackendFuture, ErrorKind, MemoryBackend, ReadOptions, SecureStorage,
     SecureStorageError, WriteOptions,
 };
 use zeroize::Zeroizing;
@@ -115,7 +115,7 @@ fn writing_none_deletes() {
 }
 
 #[test]
-fn empty_string_is_a_value() {
+fn empty_value_round_trips_and_is_not_absent() {
     let storage = SecureStorage::memory();
     write(storage, "k", Some(""));
     assert_eq!(read_value(storage, "k").as_deref(), Some(""));
@@ -123,15 +123,15 @@ fn empty_string_is_a_value() {
 }
 
 #[test]
-fn long_value_round_trips() {
+fn large_value_round_trips_on_every_platform() {
     let storage = SecureStorage::memory();
-    let long = "x".repeat(1_000_000);
+    let long = "x".repeat(1 << 20);
     write(storage, "big", Some(&long));
     assert_eq!(read_value(storage, "big").as_deref(), Some(long.as_str()));
 }
 
 #[test]
-fn keys_with_special_characters() {
+fn reserved_key_characters_round_trip() {
     let storage = SecureStorage::memory();
     let keys = [
         "with space",
@@ -140,7 +140,12 @@ fn keys_with_special_characters() {
         "quote\"and'apostrophe",
         "colon:and;semicolon",
         "../../traversal",
+        "..",
+        "été-日本",
     ];
+    let long_key = "k".repeat(300);
+    write(storage, &long_key, Some("long"));
+    assert_eq!(read_value(storage, &long_key).as_deref(), Some("long"));
     for key in keys {
         write(storage, key, Some(key));
     }
@@ -160,7 +165,7 @@ fn empty_and_nul_keys_are_refused() {
 }
 
 #[test]
-fn delete_all_touches_only_its_own_store() {
+fn delete_all_touches_only_own_prefix() {
     let mine = SecureStorage::memory();
     let other = SecureStorage::memory();
     write(mine, "k", Some("mine"));
@@ -336,7 +341,7 @@ fn concurrent_first_writes_all_land() {
 }
 
 #[test]
-fn two_handles_on_one_store_run_in_order() {
+fn two_handles_same_store_serialize_init() {
     // Two handles on one backend: the writes must not interleave, and a read after both sees the later one.
     let (backend, log) = probe_backend();
     let first = SecureStorage::with_backend(backend.clone(), Default::default());
@@ -357,7 +362,7 @@ fn two_handles_on_one_store_run_in_order() {
 }
 
 #[test]
-fn value_never_reaches_debug_or_an_error() {
+fn error_text_never_contains_the_value() {
     const SECRET: &str = "SECRET-VALUE-7f3a";
     let storage = SecureStorage::memory();
     write(storage, "k", Some(SECRET));
@@ -376,4 +381,237 @@ fn value_never_reaches_debug_or_an_error() {
     assert!(rendered.contains("ERR_SECURE_STORAGE_BACKEND"));
     assert!(rendered.contains("status -1"));
     assert!(!rendered.contains(SECRET));
+}
+
+/// A memory store whose calls can be made to fail, as a transient platform error would.
+struct FlakyBackend {
+    inner: MemoryBackend,
+    failing: std::sync::atomic::AtomicBool,
+}
+
+impl FlakyBackend {
+    fn refuse(&self) -> Result<(), SecureStorageError> {
+        if self.failing.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(SecureStorageError::new(ErrorKind::Backend).with_status(-25291))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Backend for FlakyBackend {
+    fn store_id(&self, options: &nsh_secure_storage::PlatformOptions) -> String {
+        self.inner.store_id(options)
+    }
+
+    fn write<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+        value: &'a str,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.write(options, key, value).await
+        })
+    }
+
+    fn read<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<Option<Zeroizing<String>>, SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.read(options, key).await
+        })
+    }
+
+    fn contains_key<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<bool, SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.contains_key(options, key).await
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.delete(options, key).await
+        })
+    }
+
+    fn read_all<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+    ) -> BackendFuture<'a, Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.read_all(options).await
+        })
+    }
+
+    fn delete_all<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.refuse()?;
+            self.inner.delete_all(options).await
+        })
+    }
+}
+
+#[test]
+fn transient_lookup_failure_keeps_key_and_data() {
+    let backend = Arc::new(FlakyBackend {
+        inner: MemoryBackend::new(),
+        failing: std::sync::atomic::AtomicBool::new(false),
+    });
+    let storage = SecureStorage::with_backend(backend.clone(), Default::default());
+    write(storage, "k", Some("keep-me"));
+
+    backend
+        .failing
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let read = block_on(storage.read("k", &ReadOptions::default())).unwrap_err();
+    assert_eq!(
+        read.kind(),
+        ErrorKind::Backend,
+        "a transient failure is an error"
+    );
+    assert!(block_on(storage.contains_key("k", &Default::default())).is_err());
+    assert!(block_on(storage.delete("k", &Default::default())).is_err());
+    assert!(block_on(storage.write("k", None, &WriteOptions::default())).is_err());
+
+    backend
+        .failing
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(read_value(storage, "k").as_deref(), Some("keep-me"));
+}
+
+#[test]
+fn contains_key_matches_read_on_every_platform() {
+    let storage = SecureStorage::memory();
+    let check = |key: &str| {
+        let present = block_on(storage.contains_key(key, &Default::default())).unwrap();
+        let value = read_value(storage, key);
+        assert_eq!(
+            present,
+            value.is_some(),
+            "containsKey and read disagree for {key:?}"
+        );
+    };
+    check("absent");
+    write(storage, "k", Some("v"));
+    check("k");
+    write(storage, "k", Some(""));
+    check("k");
+    write(storage, "k", None);
+    check("k");
+}
+
+#[test]
+fn read_and_delete_absent_key_are_not_errors() {
+    let storage = SecureStorage::memory();
+    assert_eq!(read_value(storage, "never-written"), None);
+    block_on(storage.delete("never-written", &Default::default())).unwrap();
+    block_on(storage.delete("never-written", &Default::default())).unwrap();
+}
+
+#[test]
+fn read_during_write_never_returns_stale_or_null() {
+    let (backend, _log) = probe_backend();
+    let storage = SecureStorage::with_backend(backend, Default::default());
+    write(storage, "k", Some("old"));
+    let futures: Vec<Pending> = vec![
+        Box::pin(async move {
+            storage
+                .write("k", Some("new"), &WriteOptions::default())
+                .await
+        }),
+        Box::pin(async move {
+            let seen = storage.read("k", &ReadOptions::default()).await?;
+            let seen = seen.map(|value| value.to_string());
+            assert!(
+                matches!(seen.as_deref(), Some("old") | Some("new")),
+                "read saw {seen:?}"
+            );
+            Ok(())
+        }),
+    ];
+    for result in join_all(futures) {
+        result.unwrap();
+    }
+    assert_eq!(read_value(storage, "k").as_deref(), Some("new"));
+}
+
+#[test]
+fn backend_load_failure_is_coded_error() {
+    /// Every call fails the way a backend that did not load does.
+    struct Unloaded;
+    impl Backend for Unloaded {
+        fn store_id(&self, _options: &nsh_secure_storage::PlatformOptions) -> String {
+            "unloaded".to_owned()
+        }
+        fn write<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+            _key: &'a str,
+            _value: &'a str,
+        ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+        fn read<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+            _key: &'a str,
+        ) -> BackendFuture<'a, Result<Option<Zeroizing<String>>, SecureStorageError>> {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+        fn contains_key<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+            _key: &'a str,
+        ) -> BackendFuture<'a, Result<bool, SecureStorageError>> {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+        fn delete<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+            _key: &'a str,
+        ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+        fn read_all<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+        ) -> BackendFuture<'a, Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError>>
+        {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+        fn delete_all<'a>(
+            &'a self,
+            _options: &'a nsh_secure_storage::PlatformOptions,
+        ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+            Box::pin(async { Err(SecureStorageError::new(ErrorKind::Backend)) })
+        }
+    }
+    let storage = SecureStorage::with_backend(Arc::new(Unloaded), Default::default());
+    let error = block_on(storage.read("k", &ReadOptions::default())).unwrap_err();
+    assert_eq!(error.code(), "ERR_SECURE_STORAGE_BACKEND");
+    assert_eq!(error.key(), Some("k"), "the key is named");
+}
+
+#[test]
+fn reset_on_error_defaults_to_false() {
+    assert!(!AndroidOptions::default().reset_on_error);
 }

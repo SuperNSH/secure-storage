@@ -122,7 +122,7 @@ fn macos_keychain_round_trip() {
 }
 
 #[test]
-fn macos_update_replaces_the_value() {
+fn apple_write_overwrites_without_delete() {
     let scratch = ScratchKeychain::create("update");
     let storage = store(&scratch.path, "nss-update");
     write(storage, "k", "one");
@@ -159,7 +159,7 @@ fn macos_read_all_is_scoped_to_the_account_name() {
 }
 
 #[test]
-fn macos_finds_an_item_at_another_accessibility_level() {
+fn apple_read_finds_item_written_with_other_accessibility() {
     // Upstream #1269: an item written at one level must be found by a read that names another.
     let scratch = ScratchKeychain::create("accessibility");
     let mut written = options(&scratch.path, "nss-accessibility");
@@ -179,7 +179,7 @@ fn macos_finds_an_item_at_another_accessibility_level() {
 }
 
 #[test]
-fn macos_special_characters_empty_and_long_values() {
+fn large_value_round_trips_on_every_platform() {
     let scratch = ScratchKeychain::create("values");
     let storage = store(&scratch.path, "nss-values");
     let keys = [
@@ -187,6 +187,8 @@ fn macos_special_characters_empty_and_long_values() {
         "slash/and\\back",
         "emoji-🔐",
         "quote\"and'apostrophe",
+        "..",
+        "colon:and;semi",
     ];
     for key in keys {
         write(storage, key, key);
@@ -194,15 +196,18 @@ fn macos_special_characters_empty_and_long_values() {
     for key in keys {
         assert_eq!(read(storage, key).as_deref(), Some(key));
     }
+    let long_key = "k".repeat(300);
+    write(storage, &long_key, "long-key");
+    assert_eq!(read(storage, &long_key).as_deref(), Some("long-key"));
     write(storage, "empty", "");
     assert_eq!(read(storage, "empty").as_deref(), Some(""));
-    let long = "y".repeat(200_000);
+    let long = "y".repeat(1 << 20);
     write(storage, "long", &long);
     assert_eq!(read(storage, "long").as_deref(), Some(long.as_str()));
 }
 
 #[test]
-fn macos_locked_keychain_gives_locked() {
+fn apple_locked_device_returns_coded_error() {
     let scratch = ScratchKeychain::create("locked");
     let mut platform = options(&scratch.path, "nss-locked");
     platform.macos.apple.authentication_ui = Some(AuthenticationUi::Fail);
@@ -247,4 +252,29 @@ fn macos_access_control_is_refused_on_the_file_keychain() {
     let storage = SecureStorage::new(with_platform(platform));
     let error = run(storage.write("guarded", Some("v"), &WriteOptions::default())).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::NotAvailable);
+}
+
+#[test]
+fn store_names_isolate_data() {
+    let scratch = ScratchKeychain::create("names");
+    let first = store(&scratch.path, "nss-names-first");
+    let second = store(&scratch.path, "nss-names-second");
+    write(first, "same", "from-first");
+    write(second, "same", "from-second");
+    assert_eq!(read(first, "same").as_deref(), Some("from-first"));
+    assert_eq!(read(second, "same").as_deref(), Some("from-second"));
+}
+
+#[test]
+fn apple_default_accessibility_is_this_device_only() {
+    assert_eq!(
+        nsh_secure_storage::AppleOptions::default().accessibility,
+        KeychainAccessibility::UnlockedThisDevice
+    );
+    assert_eq!(
+        nsh_secure_storage::IosOptions::default()
+            .apple
+            .accessibility,
+        KeychainAccessibility::UnlockedThisDevice
+    );
 }

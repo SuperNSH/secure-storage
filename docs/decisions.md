@@ -66,3 +66,19 @@ The `Backend` trait in `src/backend.rs` is the seam. It stays as it is for the o
 
 - Apple: items are protected by the Keychain, at the accessibility level given. `ThisDeviceOnly` levels do not migrate to another device.
 - Web (not built yet): there is no secret store on the web, so a script that runs on the page can read what the page can read. The web backend's docs say so.
+
+## Error codes against docs/requirements.md
+
+Codes follow the brief: `ERR_SECURE_STORAGE_*`. The requirements file uses short names. They map as follows: `locked` is `ERR_SECURE_STORAGE_LOCKED`; `entitlement_missing` is `ERR_SECURE_STORAGE_MISSING_ENTITLEMENT`; `keychain_error` and `store_unavailable` are `ERR_SECURE_STORAGE_BACKEND`; `backend_unavailable` is `ERR_SECURE_STORAGE_BACKEND`; `key_invalidated` is `ERR_SECURE_STORAGE_KEY_INVALIDATED`; `insecure_context` (web) is `ERR_SECURE_STORAGE_NOT_AVAILABLE`.
+
+## What each platform protects, and what survives
+
+Apple is built and tested. The other rows describe each platform's design; the agent that builds that backend confirms its row.
+
+| Platform | Protects against | Survives uninstall | Survives backup | Survives sync |
+|---|---|---|---|---|
+| Apple (iOS, macOS) | Other apps and other devices, while the device is locked, at the chosen accessibility level | iOS Keychain items are not removed by uninstall, so `deleteAll` before uninstalling | `Unlocked` and `FirstUnlock` levels follow an encrypted backup; `ThisDeviceOnly` levels never do | Only with `synchronizable: true` (iCloud Keychain) |
+| Android | Other apps, and a copy of the data taken without the device's key (AES-GCM key in AndroidKeyStore) | Uninstall removes the data and the key | Values sit in `no_backup`, so backup and transfer exclude them; a restored ciphertext without its key is reported and kept | No sync |
+| Windows | Other Windows users, and a copy of the values file without the Credential Manager key | Uninstall leaves Credential Manager entries in place | Not backed up (values are per machine) | No sync |
+| Linux | Other users, through the Secret Service, which needs a running service such as gnome-keyring | Secret Service items remain until deleted | Depends on the keyring's own storage | No sync |
+| Web | Nothing secret: the key sits in the page's own IndexedDB, so any script on the page can read what the page reads. The browser may clear site storage at any time | Clearing site data removes everything | Not backed up | No sync |

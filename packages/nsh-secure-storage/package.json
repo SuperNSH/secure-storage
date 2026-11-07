@@ -1,0 +1,17 @@
+{
+  "name": "nsh-secure-storage",
+  "version": "0.1.0",
+  "description": "Secure key-value storage for Native Shell TSX apps, over each platform's own secret store",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./host": "./src/host.ts",
+    "./memory": "./src/memory.ts",
+    "./rust": "./src/rust.ts"
+  },
+  "files": ["src"],
+  "repository": "https://github.com/SuperNSH/secure-storage"
+}

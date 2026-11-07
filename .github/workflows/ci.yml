@@ -52,6 +52,7 @@ jobs:
           version: v2.0.0
           cache-dir: ${{ runner.temp }}/kache
           manifest-key: rust-${{ matrix.os }}
+          cache-key-prefix: kache-rust-${{ matrix.os }}
           save-cache: ${{ github.ref == 'refs/heads/master' }}
           pr-comment: false
       - name: Install Linux packages
@@ -89,6 +90,7 @@ jobs:
           version: v2.0.0
           cache-dir: ${{ runner.temp }}/kache
           manifest-key: check-${{ matrix.target }}
+          cache-key-prefix: kache-check-${{ matrix.target }}
           save-cache: ${{ github.ref == 'refs/heads/master' }}
           pr-comment: false
       - name: Point cc at the NDK
@@ -114,6 +116,7 @@ jobs:
           version: v2.0.0
           cache-dir: ${{ runner.temp }}/kache
           manifest-key: ios-keychain
+          cache-key-prefix: kache-ios-keychain
           save-cache: ${{ github.ref == 'refs/heads/master' }}
           pr-comment: false
       - name: Boot a simulator
@@ -184,8 +187,14 @@ jobs:
           version: v2.0.0
           cache-dir: ${{ runner.temp }}/kache
           manifest-key: demo-${{ matrix.target }}
+          cache-key-prefix: kache-demo-${{ matrix.target }}
           save-cache: ${{ github.ref == 'refs/heads/master' }}
           pr-comment: false
+      - name: Install the wasm-bindgen CLI that NSH's web runtime needs
+        if: matrix.target == 'web'
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: wasm-bindgen@0.2.129
       - name: Install Linux packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES

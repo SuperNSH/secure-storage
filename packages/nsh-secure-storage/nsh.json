@@ -1,6 +1,6 @@
 {
   "name": "nsh-secure-storage tests",
-  "id": "dev.supernsh.secure-storage.tests",
+  "id": "dev.supernsh.securestorage.tests",
   "version": "0.1.0",
   "build": 1,
   "rust": "../../crates/nsh-secure-storage",

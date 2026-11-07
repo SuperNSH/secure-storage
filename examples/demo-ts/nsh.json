@@ -1,6 +1,6 @@
 {
   "name": "Secure storage demo (TSX)",
-  "id": "dev.supernsh.secure-storage.demo-ts",
+  "id": "dev.supernsh.securestorage.demots",
   "version": "0.1.0",
   "build": 1,
   "capabilities": { "host": ["secureStorage.*"] }

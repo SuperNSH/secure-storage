@@ -23,6 +23,8 @@ pub(crate) enum VaultError {
     Invalidated,
     /// The entry does not match its key, its store or its key name (`AEADBadTagException`).
     Tag,
+    /// The device has no StrongBox, and the options asked for one.
+    NoStrongBox,
     /// The keystore is locked, or the key needs a fresh authentication (`UserNotAuthenticatedException`).
     /// Retrying after unlock may succeed.
     Locked,
@@ -37,6 +39,7 @@ impl VaultError {
         let kind = match self {
             Self::Invalidated => ErrorKind::KeyInvalidated,
             Self::Tag => ErrorKind::Corrupt,
+            Self::NoStrongBox => ErrorKind::NotAvailable,
             Self::Locked => ErrorKind::Locked,
             Self::Failed => ErrorKind::Backend,
         };

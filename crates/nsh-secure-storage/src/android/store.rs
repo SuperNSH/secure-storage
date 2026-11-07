@@ -1,10 +1,8 @@
 //! The store's operations over a [`Keystore`]. A transient failure never changes the key or the
-//! file. Only a permanent signal may delete, and only when the policy opts in with `reset_on_error`.
+//! file. The core owns the reset rule: this file reports a permanent failure as `KeyInvalidated`,
+//! and [`reset`] removes the store when the core asks for it.
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use zeroize::Zeroizing;
 
@@ -25,12 +23,6 @@ fn aad(namespace: &str, key: &str) -> Vec<u8> {
     out
 }
 
-/// What opening one entry gave: its value, or a permanent failure that the policy may reset.
-enum Opened {
-    Value(Zeroizing<String>),
-    Reset,
-}
-
 fn file_of(keystore: &dyn Keystore, policy: &Policy) -> Result<PathBuf, SecureStorageError> {
     let root = keystore.no_backup_dir().map_err(VaultError::error)?;
     Ok(file::path(&root, policy.namespace()))
@@ -47,7 +39,7 @@ fn key_exists(
         .map_err(|error| error.error().with_key(key))
 }
 
-/// Makes the store's key. Called only when none exists, or after a reset removed it.
+/// Makes the store's key. Called only when none exists.
 fn create_key(
     keystore: &dyn Keystore,
     policy: &Policy,
@@ -58,41 +50,23 @@ fn create_key(
         .map_err(|error| error.error().with_key(key))
 }
 
-/// Removes the store's file, then its key: the data goes first, so a failure after it leaves
-/// only a key with nothing sealed under it.
-fn reset(
-    keystore: &dyn Keystore,
-    policy: &Policy,
-    path: &Path,
-    key: &str,
-) -> Result<(), SecureStorageError> {
-    file::remove(path).map_err(|error| error.with_key(key))?;
-    keystore
-        .delete_key(policy)
-        .map_err(|error| error.error().with_key(key))
-}
-
-/// Opens one sealed entry. A key that is missing while data exists is reported and kept.
+/// Opens one sealed entry. Data whose key is gone is reported as `KeyMissing` and kept: a key
+/// that cannot be found is not a permanent signal, so the core never resets for it.
 fn open_entry(
     keystore: &dyn Keystore,
     policy: &Policy,
     key: &str,
     sealed: &Sealed,
-) -> Result<Opened, SecureStorageError> {
+) -> Result<Zeroizing<String>, SecureStorageError> {
     if !key_exists(keystore, policy, key)? {
-        return Err(VaultError::Invalidated.error().with_key(key));
+        return Err(SecureStorageError::new(ErrorKind::KeyMissing).with_key(key));
     }
-    match keystore.open(policy, &aad(policy.namespace(), key), sealed) {
-        Ok(bytes) => {
-            let text = std::str::from_utf8(&bytes)
-                .map_err(|_| SecureStorageError::new(ErrorKind::Corrupt).with_key(key))?;
-            Ok(Opened::Value(Zeroizing::new(text.to_owned())))
-        }
-        Err(VaultError::Invalidated | VaultError::Tag) if policy.reset_on_error => {
-            Ok(Opened::Reset)
-        }
-        Err(error) => Err(error.error().with_key(key)),
-    }
+    let bytes = keystore
+        .open(policy, &aad(policy.namespace(), key), sealed)
+        .map_err(|error| error.error().with_key(key))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| SecureStorageError::new(ErrorKind::Corrupt).with_key(key))?;
+    Ok(Zeroizing::new(text.to_owned()))
 }
 
 /// Writes `value` under `key`. A new key is made only when the store has no key and no data.
@@ -106,24 +80,13 @@ pub(crate) fn write(
     let mut entries = file::load(&path).map_err(|error| error.with_key(key))?;
     if !key_exists(keystore, policy, key)? {
         if !entries.is_empty() {
-            return Err(VaultError::Invalidated.error().with_key(key));
+            return Err(SecureStorageError::new(ErrorKind::KeyMissing).with_key(key));
         }
         create_key(keystore, policy, key)?;
     }
-    let aad = aad(policy.namespace(), key);
-    let sealed = match keystore.seal(policy, &aad, value.as_bytes()) {
-        Ok(sealed) => sealed,
-        Err(VaultError::Invalidated) if policy.reset_on_error => {
-            // The one retry. A second failure is reported, and nothing else is tried.
-            reset(keystore, policy, &path, key)?;
-            entries.clear();
-            create_key(keystore, policy, key)?;
-            keystore
-                .seal(policy, &aad, value.as_bytes())
-                .map_err(|error| error.error().with_key(key))?
-        }
-        Err(error) => return Err(error.error().with_key(key)),
-    };
+    let sealed = keystore
+        .seal(policy, &aad(policy.namespace(), key), value.as_bytes())
+        .map_err(|error| error.error().with_key(key))?;
     entries.insert(key.to_owned(), sealed);
     file::save(&path, &entries).map_err(|error| error.with_key(key))
 }
@@ -136,15 +99,9 @@ pub(crate) fn read(
 ) -> Result<Option<Zeroizing<String>>, SecureStorageError> {
     let path = file_of(keystore, policy)?;
     let entries = file::load(&path).map_err(|error| error.with_key(key))?;
-    let Some(sealed) = entries.get(key) else {
-        return Ok(None);
-    };
-    match open_entry(keystore, policy, key, sealed)? {
-        Opened::Value(value) => Ok(Some(value)),
-        Opened::Reset => {
-            reset(keystore, policy, &path, key)?;
-            Ok(None)
-        }
+    match entries.get(key) {
+        Some(sealed) => open_entry(keystore, policy, key, sealed).map(Some),
+        None => Ok(None),
     }
 }
 
@@ -182,25 +139,14 @@ pub(crate) fn read_all(
     let entries = file::load(&path)?;
     let mut all = BTreeMap::new();
     for (key, sealed) in &entries {
-        match open_entry(keystore, policy, key, sealed)? {
-            Opened::Value(value) => {
-                all.insert(key.clone(), value);
-            }
-            Opened::Reset => {
-                reset(keystore, policy, &path, key)?;
-                return Ok(BTreeMap::new());
-            }
-        }
+        all.insert(key.clone(), open_entry(keystore, policy, key, sealed)?);
     }
     Ok(all)
 }
 
-/// Removes every entry of this store and its key, and nothing of any other store. The next write
-/// makes a fresh key, which is also how a store whose key was invalidated gets back to use.
-pub(crate) fn delete_all(
-    keystore: &dyn Keystore,
-    policy: &Policy,
-) -> Result<(), SecureStorageError> {
+/// Removes the store's file, then its key, and nothing of any other store. The next write makes a
+/// fresh key. Used by `delete_all`, and by the backend's `reset_store` when the core asks.
+pub(crate) fn reset(keystore: &dyn Keystore, policy: &Policy) -> Result<(), SecureStorageError> {
     let path = file_of(keystore, policy)?;
     file::remove(&path)?;
     keystore.delete_key(policy).map_err(VaultError::error)

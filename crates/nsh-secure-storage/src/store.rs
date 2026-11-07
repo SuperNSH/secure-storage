@@ -373,7 +373,11 @@ fn platform_backend() -> Arc<dyn Backend> {
     {
         Arc::new(crate::apple::AppleBackend)
     }
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    #[cfg(target_os = "android")]
+    {
+        Arc::new(crate::android::AndroidBackend::new())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
     {
         Arc::new(crate::unsupported::UnsupportedBackend)
     }

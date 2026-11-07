@@ -100,6 +100,10 @@ impl Keystore for Fake {
     }
 
     fn create_key(&self, policy: &Policy) -> Result<(), VaultError> {
+        if policy.strongbox {
+            // The test device has no StrongBox.
+            return Err(VaultError::NoStrongBox);
+        }
         let alias = policy.alias();
         self.with(|s| {
             s.created += 1;
@@ -401,7 +405,8 @@ fn reset_on_error_runs_at_most_once() {
     h.fake.with(|s| s.invalid_on_create = true);
     h.invalidate();
     let error = put(h.s(), "token", "second").unwrap_err();
-    assert_eq!(code(&error), "ERR_SECURE_STORAGE_KEY_INVALIDATED");
+    // R3: a fresh key that fails too is reset_failed, reported once.
+    assert_eq!(code(&error), "ERR_SECURE_STORAGE_RESET_FAILED");
     assert_eq!(h.counts(), (2, 1));
 }
 
@@ -418,11 +423,11 @@ fn android_null_keystore_read_with_stored_data_keeps_key() {
     h.fake.with(|s| s.hidden = true);
     assert_eq!(
         code(&get(h.s(), "token").unwrap_err()),
-        "ERR_SECURE_STORAGE_KEY_INVALIDATED"
+        "ERR_SECURE_STORAGE_KEY_MISSING"
     );
     assert_eq!(
         code(&put(h.s(), "token", "second").unwrap_err()),
-        "ERR_SECURE_STORAGE_KEY_INVALIDATED"
+        "ERR_SECURE_STORAGE_KEY_MISSING"
     );
     h.fake.with(|s| s.hidden = false);
     assert_eq!(h.counts(), (1, 0));
@@ -436,11 +441,11 @@ fn restored_ciphertext_without_key_is_kept_and_reported() {
     // A restore brings the file back without the Keystore key.
     h.fake.with(|s| s.keys.clear());
     let error = get(h.s(), "token").unwrap_err();
-    assert_eq!(code(&error), "ERR_SECURE_STORAGE_KEY_INVALIDATED");
+    assert_eq!(code(&error), "ERR_SECURE_STORAGE_KEY_MISSING");
     assert_eq!(error.key(), Some("token"));
     assert_eq!(
         code(&put(h.s(), "token", "second").unwrap_err()),
-        "ERR_SECURE_STORAGE_KEY_INVALIDATED"
+        "ERR_SECURE_STORAGE_KEY_MISSING"
     );
     assert!(h.file().exists());
     assert_eq!(h.entries(), 1);
@@ -566,4 +571,27 @@ fn error_text_never_contains_the_value() {
     let text = format!("{error} {error:?}");
     assert!(!text.contains("SECRET-VALUE-4242"));
     assert!(text.contains("token"));
+}
+
+#[test]
+fn require_strong_box_without_strongbox_is_not_available() {
+    let h = Harness::new(false);
+    let android = AndroidOptions {
+        require_strong_box: true,
+        ..AndroidOptions::default()
+    };
+    let store = SecureStorage::with_backend(
+        Arc::new(AndroidBackend::with_keystore(h.fake.clone())),
+        SecureStorageOptions {
+            platform: PlatformOptions {
+                android,
+                ..PlatformOptions::default()
+            },
+        },
+    );
+    let error = put(store, "token", "first").unwrap_err();
+    assert_eq!(code(&error), "ERR_SECURE_STORAGE_NOT_AVAILABLE");
+    // No key and no file are made when the device cannot give the key.
+    assert_eq!(h.counts(), (0, 0));
+    assert!(!h.file().exists());
 }

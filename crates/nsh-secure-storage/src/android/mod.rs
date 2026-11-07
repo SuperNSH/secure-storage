@@ -4,6 +4,8 @@
 //! The store logic is plain Rust and runs on any host. Only the JNI Keystore is Android-only.
 
 mod file;
+#[cfg(target_os = "android")]
+mod jni;
 mod keystore;
 mod store;
 #[cfg(test)]
@@ -26,6 +28,12 @@ pub(crate) struct AndroidBackend {
 }
 
 impl AndroidBackend {
+    /// The backend on this device's AndroidKeyStore.
+    #[cfg(target_os = "android")]
+    pub(crate) fn new() -> Self {
+        Self::with_keystore(Arc::new(jni::Jni))
+    }
+
     /// The backend on `keystore`. Tests use a fake here.
     pub(crate) fn with_keystore(keystore: Arc<dyn Keystore>) -> Self {
         Self { keystore }
@@ -123,7 +131,19 @@ impl Backend for AndroidBackend {
         options: &'a PlatformOptions,
     ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
         let work = call(self, options, move |keystore, policy| {
-            store::delete_all(&*keystore, &policy)
+            store::reset(&*keystore, &policy)
+        });
+        Box::pin(async move { work.await? })
+    }
+
+    /// Removes the store's file and key. The core calls it once, after a `KeyInvalidated` with
+    /// `reset_on_error`, and retries the call once.
+    fn reset_store<'a>(
+        &'a self,
+        options: &'a PlatformOptions,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        let work = call(self, options, move |keystore, policy| {
+            store::reset(&*keystore, &policy)
         });
         Box::pin(async move { work.await? })
     }

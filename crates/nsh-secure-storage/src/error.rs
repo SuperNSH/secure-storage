@@ -24,6 +24,8 @@ pub enum ErrorKind {
     InvalidKey,
     /// The key was invalidated, the store was reset, and the retry failed too.
     ResetFailed,
+    /// The store holds data, but its key is gone (a restore brought back the data alone). The data is kept.
+    KeyMissing,
     /// The platform store failed; `status` holds its own code where it has one.
     Backend,
 }
@@ -83,6 +85,7 @@ impl SecureStorageError {
             ErrorKind::Locked => "ERR_SECURE_STORAGE_LOCKED",
             ErrorKind::NotAvailable => "ERR_SECURE_STORAGE_NOT_AVAILABLE",
             ErrorKind::KeyInvalidated => "ERR_SECURE_STORAGE_KEY_INVALIDATED",
+            ErrorKind::KeyMissing => "ERR_SECURE_STORAGE_KEY_MISSING",
             ErrorKind::Corrupt => "ERR_SECURE_STORAGE_CORRUPT",
             ErrorKind::AuthCancelled => "ERR_SECURE_STORAGE_AUTH_CANCELLED",
             ErrorKind::AuthFailed => "ERR_SECURE_STORAGE_AUTH_FAILED",
@@ -102,6 +105,9 @@ impl SecureStorageError {
             }
             ErrorKind::KeyInvalidated => {
                 "The key for this data was invalidated, so the data cannot be read. Delete the key and write it again."
+            }
+            ErrorKind::KeyMissing => {
+                "The key for this data is missing, so the data cannot be read. The data was kept, and nothing was deleted."
             }
             ErrorKind::Corrupt => "The stored data is damaged and cannot be decoded.",
             ErrorKind::AuthCancelled => "The user cancelled the authentication prompt.",

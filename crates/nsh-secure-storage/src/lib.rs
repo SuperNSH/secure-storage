@@ -4,7 +4,7 @@
 //! so the engine thread never waits on the platform. [`use_secure_value`] reads one key as a
 //! reactive value that follows the writes made through the same store.
 
-#[cfg(test)]
+#[cfg(any(target_os = "android", test))]
 mod android;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple;
@@ -15,7 +15,7 @@ mod native;
 mod options;
 mod reactive;
 mod store;
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "android")))]
 mod unsupported;
 
 pub use backend::{Backend, BackendFuture};

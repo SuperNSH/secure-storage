@@ -24,6 +24,7 @@ env:
 jobs:
   format:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -35,6 +36,7 @@ jobs:
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -61,11 +63,12 @@ jobs:
         run: cargo test -p nsh-secure-storage --all-features --no-fail-fast
       - name: Test
         if: runner.os == 'Linux'
-        run: sh tools/linux-test/entrypoint.sh "cargo test -p nsh-secure-storage --all-features --no-fail-fast"
+        run: sh tools/linux-test/entrypoint.sh "timeout 600 cargo test -p nsh-secure-storage --all-features --no-fail-fast -- --skip linux_secret_service_locked_keyring" "timeout 300 cargo test -p nsh-secure-storage --all-features --test linux_locked_keyring"
 
   cross-check:
     name: check (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +102,7 @@ jobs:
 
   ios-keychain:
     runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -126,12 +130,13 @@ jobs:
 
   typescript:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install NSH
         if: runner.os != 'Windows'
         env:
-          NSH_VERSION: 0.4.0
+          NSH_VERSION: v0.4.0
         run: |
           curl -fsSL https://nsh.dev/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -140,7 +145,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          NSH_VERSION: 0.4.0
+          NSH_VERSION: v0.4.0
         run: |
           irm https://nsh.dev/install.ps1 | iex
           "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
@@ -157,6 +162,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     needs: [format, rust, typescript]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -186,7 +192,7 @@ jobs:
       - name: Install NSH
         if: runner.os != 'Windows'
         env:
-          NSH_VERSION: 0.4.0
+          NSH_VERSION: v0.4.0
         run: |
           curl -fsSL https://nsh.dev/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -195,7 +201,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          NSH_VERSION: 0.4.0
+          NSH_VERSION: v0.4.0
         run: |
           irm https://nsh.dev/install.ps1 | iex
           "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
@@ -243,6 +249,7 @@ jobs:
     needs: demo
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: write
     concurrency:

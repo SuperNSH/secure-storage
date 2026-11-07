@@ -54,7 +54,12 @@ impl ScratchKeychain {
             for entry in entries.flatten() {
                 let file = entry.file_name();
                 let file = file.to_string_lossy();
-                if file.starts_with("nsh-secure-storage-") && file.ends_with(".keychain-db") {
+                // Tests run in parallel, so leave this process's own keychains alone.
+                let own = format!("-{}.keychain-db", std::process::id());
+                if file.starts_with("nsh-secure-storage-")
+                    && file.ends_with(".keychain-db")
+                    && !file.ends_with(&own)
+                {
                     let _ = std::fs::remove_file(entry.path());
                 }
             }

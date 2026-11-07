@@ -3,6 +3,8 @@
 
 use std::{collections::BTreeMap, path::PathBuf, ptr};
 
+#[cfg(target_os = "macos")]
+use super::sys::kSecUseDataProtectionKeychain;
 use core_foundation::{
     array::CFArray,
     base::{CFType, CFTypeRef, TCFType},
@@ -12,8 +14,12 @@ use core_foundation::{
     number::CFNumber,
     string::{CFString, CFStringRef},
 };
-use security_framework::access_control::{ProtectionMode, SecAccessControl};
 use core_foundation_sys::base::OSStatus;
+use security_framework::access_control::{ProtectionMode, SecAccessControl};
+#[cfg(target_os = "macos")]
+use security_framework_sys::item::kSecMatchSearchList;
+#[cfg(target_os = "macos")]
+use security_framework_sys::item::kSecUseKeychain;
 use security_framework_sys::{
     access_control::{
         kSecAttrAccessibleAfterFirstUnlock, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -24,9 +30,8 @@ use security_framework_sys::{
         kSecAttrAccessControl, kSecAttrAccessGroup, kSecAttrAccount, kSecAttrComment,
         kSecAttrDescription, kSecAttrLabel, kSecAttrService, kSecAttrSynchronizable,
         kSecAttrSynchronizableAny, kSecClass, kSecClassGenericPassword, kSecMatchLimit,
-        kSecMatchLimitAll, kSecMatchSearchList, kSecReturnAttributes, kSecReturnData,
-        kSecUseAuthenticationUI,
-        kSecUseAuthenticationUISkip, kSecUseKeychain, kSecValueData,
+        kSecMatchLimitAll, kSecReturnAttributes, kSecReturnData, kSecUseAuthenticationUI,
+        kSecUseAuthenticationUISkip, kSecValueData,
     },
     keychain_item::{SecItemAdd, SecItemCopyMatching, SecItemDelete, SecItemUpdate},
 };
@@ -37,7 +42,7 @@ use super::{
     sys::{
         ERR_SEC_DUPLICATE_ITEM, ERR_SEC_ITEM_NOT_FOUND, kSecAttrAccessible, kSecAttrIsInvisible,
         kSecAttrIsNegative, kSecMatchLimitOne, kSecUseAuthenticationUIAllow,
-        kSecUseAuthenticationUIFail, kSecUseDataProtectionKeychain, kSecUseOperationPrompt,
+        kSecUseAuthenticationUIFail, kSecUseOperationPrompt,
     },
 };
 use crate::{
@@ -136,12 +141,20 @@ impl Spec {
     }
 }
 
+/// The guard that keeps a call from showing a dialog. Only macOS has one to hold.
+#[cfg(target_os = "macos")]
+type NoPromptGuard = super::prompt::NoPrompt;
+#[cfg(not(target_os = "macos"))]
+type NoPromptGuard = ();
+
 /// Holds the no-prompt guard for a call whose spec asks for no authentication prompt.
-fn no_prompt_guard(spec: &Spec) -> Option<super::prompt::NoPrompt> {
+fn no_prompt_guard(spec: &Spec) -> Option<NoPromptGuard> {
     #[cfg(target_os = "macos")]
     {
         match spec.auth_ui {
-            Some(AuthenticationUi::Fail | AuthenticationUi::Skip) => Some(super::prompt::NoPrompt::enter()),
+            Some(AuthenticationUi::Fail | AuthenticationUi::Skip) => {
+                Some(super::prompt::NoPrompt::enter())
+            }
             _ => None,
         }
     }
@@ -175,7 +188,11 @@ pub(crate) fn write(spec: &Spec, key: &str, value: &str) -> Result<(), SecureSto
     put(&mut add, sec!(kSecValueData), data.into_CFType());
     put_attributes(spec, &mut add, Mode::Add)?;
     if spec.data_protection || spec.synchronizable {
-        put(&mut add, sec!(kSecAttrSynchronizable), bool_value(spec.synchronizable));
+        put(
+            &mut add,
+            sec!(kSecAttrSynchronizable),
+            bool_value(spec.synchronizable),
+        );
     }
     match add_item(&add) {
         0 => Ok(()),
@@ -194,7 +211,11 @@ pub(crate) fn read(
     ensure_unlocked(spec, keychain.as_ref())?;
     let mut query = search_query(spec, keychain.as_ref(), key);
     put(&mut query, sec!(kSecReturnData), bool_value(true));
-    put(&mut query, sec!(kSecMatchLimit), constant(sec!(kSecMatchLimitOne)));
+    put(
+        &mut query,
+        sec!(kSecMatchLimit),
+        constant(sec!(kSecMatchLimitOne)),
+    );
     let mut found: CFTypeRef = ptr::null();
     match copy_matching(&query, Some(&mut found)) {
         0 => {}
@@ -215,7 +236,11 @@ pub(crate) fn contains_key(spec: &Spec, key: &str) -> Result<bool, SecureStorage
     let keychain = open_keychain(spec)?;
     ensure_unlocked(spec, keychain.as_ref())?;
     let mut query = search_query(spec, keychain.as_ref(), key);
-    put(&mut query, sec!(kSecMatchLimit), constant(sec!(kSecMatchLimitOne)));
+    put(
+        &mut query,
+        sec!(kSecMatchLimit),
+        constant(sec!(kSecMatchLimitOne)),
+    );
     match copy_matching(&query, None) {
         0 => Ok(true),
         ERR_SEC_ITEM_NOT_FOUND => Ok(false),
@@ -269,7 +294,7 @@ fn list_accounts(spec: &Spec) -> Result<Vec<String>, SecureStorageError> {
                 let item: CFDictionary<CFType, CFType> =
                     unsafe { CFDictionary::wrap_under_get_rule(item.as_concrete_TypeRef()) };
                 if let Some(account) = item
-                    .find(&constant(sec!(kSecAttrAccount)))
+                    .find(constant(sec!(kSecAttrAccount)))
                     .and_then(|account| account.downcast::<CFString>())
                 {
                     accounts.push(account.to_string());
@@ -328,7 +353,11 @@ enum Purpose {
 /// The query that finds every item of the service (or the attributes of an add), in `keychain` when given.
 fn scope(spec: &Spec, keychain: Option<&SecKeychainHandle>, purpose: Purpose) -> Dict {
     let mut dict = Dict::new();
-    put(&mut dict, sec!(kSecClass), constant(sec!(kSecClassGenericPassword)));
+    put(
+        &mut dict,
+        sec!(kSecClass),
+        constant(sec!(kSecClassGenericPassword)),
+    );
     put_str(&mut dict, sec!(kSecAttrService), &spec.service);
     if let Some(group) = &spec.group {
         put_str(&mut dict, sec!(kSecAttrAccessGroup), group);
@@ -348,13 +377,21 @@ fn scope(spec: &Spec, keychain: Option<&SecKeychainHandle>, purpose: Purpose) ->
             }
         }
         if spec.data_protection {
-            put(&mut dict, sec!(kSecUseDataProtectionKeychain), bool_value(true));
+            put(
+                &mut dict,
+                sec!(kSecUseDataProtectionKeychain),
+                bool_value(true),
+            );
         }
     }
     #[cfg(not(target_os = "macos"))]
     let _ = (keychain, purpose);
     if spec.matches_any_sync() {
-        put(&mut dict, sec!(kSecAttrSynchronizable), constant(sec!(kSecAttrSynchronizableAny)));
+        put(
+            &mut dict,
+            sec!(kSecAttrSynchronizable),
+            constant(sec!(kSecAttrSynchronizableAny)),
+        );
     }
     dict
 }
@@ -400,11 +437,16 @@ fn put_attributes(spec: &Spec, dict: &mut Dict, mode: Mode) -> Result<(), Secure
         put(dict, sec!(kSecAttrIsNegative), bool_value(negative));
     }
     if spec.flags.is_empty() {
-        put(dict, sec!(kSecAttrAccessible), constant(accessible_value(spec.accessibility)));
+        put(
+            dict,
+            sec!(kSecAttrAccessible),
+            constant(accessible_value(spec.accessibility)),
+        );
     } else if mode == Mode::Add {
         let protection = protection_mode(spec.accessibility);
-        let control = SecAccessControl::create_with_protection(Some(protection), flag_bits(&spec.flags))
-            .map_err(|error| from_status(error.code()))?;
+        let control =
+            SecAccessControl::create_with_protection(Some(protection), flag_bits(&spec.flags))
+                .map_err(|error| from_status(error.code()))?;
         put(dict, sec!(kSecAttrAccessControl), control.into_CFType());
     }
     Ok(())
@@ -415,7 +457,9 @@ fn accessible_value(level: KeychainAccessibility) -> CFStringRef {
     match level {
         KeychainAccessibility::Passcode => sec!(kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly),
         KeychainAccessibility::Unlocked => sec!(kSecAttrAccessibleWhenUnlocked),
-        KeychainAccessibility::UnlockedThisDevice => sec!(kSecAttrAccessibleWhenUnlockedThisDeviceOnly),
+        KeychainAccessibility::UnlockedThisDevice => {
+            sec!(kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+        }
         KeychainAccessibility::FirstUnlock => sec!(kSecAttrAccessibleAfterFirstUnlock),
         KeychainAccessibility::FirstUnlockThisDevice => {
             sec!(kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)
@@ -470,13 +514,20 @@ type SecKeychainHandle = ();
 
 /// With `Fail` or `Skip`, a locked file keychain is reported as `Locked` rather than asked to unlock.
 #[cfg(target_os = "macos")]
-fn ensure_unlocked(spec: &Spec, keychain: Option<&SecKeychainHandle>) -> Result<(), SecureStorageError> {
-    let (Some(keychain), Some(AuthenticationUi::Fail | AuthenticationUi::Skip)) = (keychain, spec.auth_ui) else {
+fn ensure_unlocked(
+    spec: &Spec,
+    keychain: Option<&SecKeychainHandle>,
+) -> Result<(), SecureStorageError> {
+    let (Some(keychain), Some(AuthenticationUi::Fail | AuthenticationUi::Skip)) =
+        (keychain, spec.auth_ui)
+    else {
         return Ok(());
     };
     let mut state: u32 = 0;
     // SAFETY: the keychain reference is alive for the call, and the state is written only through `state`.
-    let code = unsafe { super::sys::SecKeychainGetStatus(keychain.as_concrete_TypeRef() as _, &mut state) };
+    let code = unsafe {
+        super::sys::SecKeychainGetStatus(keychain.as_concrete_TypeRef() as _, &mut state)
+    };
     if code != 0 {
         return Err(from_status(code));
     }
@@ -487,7 +538,10 @@ fn ensure_unlocked(spec: &Spec, keychain: Option<&SecKeychainHandle>) -> Result<
 }
 
 #[cfg(not(target_os = "macos"))]
-fn ensure_unlocked(_spec: &Spec, _keychain: Option<&SecKeychainHandle>) -> Result<(), SecureStorageError> {
+fn ensure_unlocked(
+    _spec: &Spec,
+    _keychain: Option<&SecKeychainHandle>,
+) -> Result<(), SecureStorageError> {
     Ok(())
 }
 

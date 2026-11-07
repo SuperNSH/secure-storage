@@ -272,7 +272,10 @@ fn a_binding_on_one_key_wakes_only_for_that_key() -> Result<(), String> {
 
     app.press("role:button[Write a]")?;
     app.wait_for("a=new-a")?;
-    assert!(A_RUNS.load(SeqCst) > a_before, "the binding on the written key runs again");
+    assert!(
+        A_RUNS.load(SeqCst) > a_before,
+        "the binding on the written key runs again"
+    );
     assert_eq!(
         B_RUNS.load(SeqCst),
         b_before,
@@ -294,7 +297,10 @@ fn a_write_during_a_slow_read_wins() -> Result<(), String> {
     app.run_for(Duration::from_secs(2))?;
     app.run_for(Duration::from_secs(1))?;
 
-    assert!(app.screen().shows("a=new"), "the older read must not overwrite the write");
+    assert!(
+        app.screen().shows("a=new"),
+        "the older read must not overwrite the write"
+    );
     let seen = SEEN_A.lock().unwrap().clone();
     let first_new = seen.iter().position(|s| s == "a=new");
     assert!(

@@ -10,9 +10,8 @@ use std::{
 };
 
 use nsh_secure_storage::{
-    AccessControlFlag, AuthenticationUi, ErrorKind, KeychainAccessibility,
-    MacOsOptions, PlatformOptions, ReadOptions, SecureStorage, SecureStorageOptions,
-    WriteOptions,
+    AccessControlFlag, AuthenticationUi, ErrorKind, KeychainAccessibility, MacOsOptions,
+    PlatformOptions, ReadOptions, SecureStorage, SecureStorageOptions, WriteOptions,
 };
 use security_framework::os::macos::keychain::{CreateOptions, SecKeychain};
 
@@ -144,11 +143,19 @@ fn macos_read_all_is_scoped_to_the_account_name() {
 
     let listed = run(mine.read_all(&Default::default())).unwrap();
     let keys: Vec<&str> = listed.keys().map(String::as_str).collect();
-    assert_eq!(keys, ["a", "b"], "read_all must list only this account name");
+    assert_eq!(
+        keys,
+        ["a", "b"],
+        "read_all must list only this account name"
+    );
 
     run(mine.delete_all(&Default::default())).unwrap();
     assert!(run(mine.read_all(&Default::default())).unwrap().is_empty());
-    assert_eq!(read(other, "x").as_deref(), Some("9"), "delete_all must not touch another service");
+    assert_eq!(
+        read(other, "x").as_deref(),
+        Some("9"),
+        "delete_all must not touch another service"
+    );
 }
 
 #[test]
@@ -157,15 +164,17 @@ fn macos_finds_an_item_at_another_accessibility_level() {
     let scratch = ScratchKeychain::create("accessibility");
     let mut written = options(&scratch.path, "nss-accessibility");
     written.macos.apple.accessibility = KeychainAccessibility::Unlocked;
-    run(SecureStorage::new(with_platform(written))
-        .write("k", Some("found"), &WriteOptions::default()))
+    run(SecureStorage::new(with_platform(written)).write(
+        "k",
+        Some("found"),
+        &WriteOptions::default(),
+    ))
     .unwrap();
 
     let mut reading = options(&scratch.path, "nss-accessibility");
     reading.macos.apple.accessibility = KeychainAccessibility::FirstUnlockThisDevice;
-    let found = run(SecureStorage::new(with_platform(reading))
-        .read("k", &ReadOptions::default()))
-    .unwrap();
+    let found =
+        run(SecureStorage::new(with_platform(reading)).read("k", &ReadOptions::default())).unwrap();
     assert_eq!(found.as_deref().map(String::as_str), Some("found"));
 }
 
@@ -173,7 +182,12 @@ fn macos_finds_an_item_at_another_accessibility_level() {
 fn macos_special_characters_empty_and_long_values() {
     let scratch = ScratchKeychain::create("values");
     let storage = store(&scratch.path, "nss-values");
-    let keys = ["with space", "slash/and\\back", "emoji-🔐", "quote\"and'apostrophe"];
+    let keys = [
+        "with space",
+        "slash/and\\back",
+        "emoji-🔐",
+        "quote\"and'apostrophe",
+    ];
     for key in keys {
         write(storage, key, key);
     }
@@ -203,7 +217,11 @@ fn macos_locked_keychain_gives_locked() {
     assert!(status.success(), "the throwaway keychain locks");
 
     let error = run(storage.read("k", &ReadOptions::default())).unwrap_err();
-    assert_eq!(error.kind(), ErrorKind::Locked, "a locked keychain with no prompt allowed");
+    assert_eq!(
+        error.kind(),
+        ErrorKind::Locked,
+        "a locked keychain with no prompt allowed"
+    );
     assert_eq!(error.code(), "ERR_SECURE_STORAGE_LOCKED");
     assert!(!format!("{error:?}").contains("secret-value"));
 }

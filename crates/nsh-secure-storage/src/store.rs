@@ -57,12 +57,15 @@ struct Surface {
     next_listener: Cell<u64>,
 }
 
+/// What a listener is called with: the key's new value, or `None` when it was removed.
+type ListenerCall = Rc<dyn Fn(Option<&str>)>;
+
 /// A registered listener.
 #[derive(Clone)]
 struct Listener {
     id: u64,
     key: String,
-    call: Rc<dyn Fn(Option<&str>)>,
+    call: ListenerCall,
 }
 
 impl SecureStorage {
@@ -155,7 +158,11 @@ impl SecureStorage {
     }
 
     /// Removes the value under `key`. A key that is not there is not an error.
-    pub async fn delete(self, key: &str, options: &DeleteOptions) -> Result<(), SecureStorageError> {
+    pub async fn delete(
+        self,
+        key: &str,
+        options: &DeleteOptions,
+    ) -> Result<(), SecureStorageError> {
         check_key(key)?;
         let platform = self.resolve(options);
         self.remove(key, &platform).await
@@ -227,7 +234,10 @@ impl SecureStorage {
     /// Calls `listener` with `true` or `false` when protected data becomes available or not
     /// (iOS). Off iOS it is never called.
     pub fn on_protected_data_change(&self, listener: impl Fn(bool) + 'static) -> Subscription {
-        let stop = self.surface.backend.on_protected_data_change(Rc::new(listener));
+        let stop = self
+            .surface
+            .backend
+            .on_protected_data_change(Rc::new(listener));
         Subscription::new(stop)
     }
 
@@ -268,7 +278,11 @@ impl SecureStorage {
     }
 
     /// Removes `key` under the lock, then tells its listeners.
-    async fn remove(&self, key: &str, platform: &PlatformOptions) -> Result<(), SecureStorageError> {
+    async fn remove(
+        &self,
+        key: &str,
+        platform: &PlatformOptions,
+    ) -> Result<(), SecureStorageError> {
         let guard = self.lock(platform).await;
         let removed = self
             .surface
@@ -302,7 +316,9 @@ pub(crate) fn check_key(key: &str) -> Result<(), SecureStorageError> {
 fn store_lock(id: String) -> Arc<AsyncMutex<()>> {
     static LOCKS: OnceLock<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>> = OnceLock::new();
     let locks = LOCKS.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut locks = locks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut locks = locks
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     locks.retain(|_, lock| lock.strong_count() > 0);
     if let Some(lock) = locks.get(&id).and_then(Weak::upgrade) {
         return lock;

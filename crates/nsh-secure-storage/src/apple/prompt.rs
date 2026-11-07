@@ -15,7 +15,9 @@ pub(crate) struct NoPrompt;
 
 impl NoPrompt {
     pub(crate) fn enter() -> Self {
-        let mut guards = GUARDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guards = GUARDS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if guards.0 == 0 {
             guards.1 = SecKeychain::user_interaction_allowed().unwrap_or(true);
             set_interaction(false);
@@ -27,7 +29,9 @@ impl NoPrompt {
 
 impl Drop for NoPrompt {
     fn drop(&mut self) {
-        let mut guards = GUARDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut guards = GUARDS
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guards.0 -= 1;
         if guards.0 == 0 && guards.1 {
             set_interaction(true);

@@ -1,11 +1,12 @@
 //! Security.framework constants `security-framework-sys` does not export, and the OSStatus codes
 //! this backend maps. Each value is from the SDK's `SecBase.h`.
 
-use core_foundation_sys::base::OSStatus;
 use core_foundation::string::CFStringRef;
+use core_foundation_sys::base::OSStatus;
 
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
+    #[cfg(target_os = "macos")]
     /// `SecKeychainGetStatus`: reports the keychain's state bits. Deprecated, but the file keychain has no other call for it.
     pub fn SecKeychainGetStatus(keychain: *const std::ffi::c_void, status: *mut u32) -> OSStatus;
     pub static kSecAttrAccessible: CFStringRef;
@@ -13,6 +14,7 @@ unsafe extern "C" {
     pub static kSecAttrIsNegative: CFStringRef;
     pub static kSecMatchLimitOne: CFStringRef;
     pub static kSecUseOperationPrompt: CFStringRef;
+    #[cfg(target_os = "macos")]
     pub static kSecUseDataProtectionKeychain: CFStringRef;
     pub static kSecUseAuthenticationUIAllow: CFStringRef;
     pub static kSecUseAuthenticationUIFail: CFStringRef;
@@ -38,4 +40,5 @@ pub const ERR_SEC_DECODE: OSStatus = -26275;
 pub const ERR_SEC_MISSING_ENTITLEMENT: OSStatus = -34018;
 
 /// `kSecUnlockStateStatus`: set while the keychain is unlocked.
+#[cfg(target_os = "macos")]
 pub const K_SEC_UNLOCK_STATE_STATUS: u32 = 1;

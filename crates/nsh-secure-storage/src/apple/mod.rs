@@ -3,13 +3,17 @@
 //! Each call runs on a blocking thread through `nsh_core::blocking`. The items are generic
 //! passwords filed under the account name as their service.
 
+mod ops;
 #[cfg(target_os = "macos")]
 mod prompt;
-mod ops;
+#[cfg(target_os = "ios")]
+mod protected;
 mod status;
 mod sys;
 
 use std::collections::BTreeMap;
+#[cfg(target_os = "ios")]
+use std::rc::Rc;
 
 use zeroize::Zeroizing;
 
@@ -114,5 +118,15 @@ impl Backend for AppleBackend {
             let spec = spec?;
             run(move || ops::delete_all(&spec)).await?
         })
+    }
+
+    #[cfg(target_os = "ios")]
+    fn is_protected_data_available(&self) -> bool {
+        protected::is_available()
+    }
+
+    #[cfg(target_os = "ios")]
+    fn on_protected_data_change(&self, listener: Rc<dyn Fn(bool)>) -> Box<dyn FnOnce()> {
+        protected::subscribe(listener)
     }
 }

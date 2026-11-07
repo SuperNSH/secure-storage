@@ -763,6 +763,7 @@ dependencies = [
  "nsh-core",
  "nsh-engine",
  "nsh-testing",
+ "objc2",
  "objc2-foundation",
  "objc2-ui-kit",
  "security-framework",

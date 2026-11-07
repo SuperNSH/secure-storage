@@ -37,7 +37,9 @@ impl MemoryBackend {
     }
 
     fn entries(&self) -> MutexGuard<'_, BTreeMap<String, Zeroizing<String>>> {
-        self.entries.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 }
 
@@ -53,7 +55,8 @@ impl Backend for MemoryBackend {
         value: &'a str,
     ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
         Box::pin(async move {
-            self.entries().insert(key.to_owned(), Zeroizing::new(value.to_owned()));
+            self.entries()
+                .insert(key.to_owned(), Zeroizing::new(value.to_owned()));
             Ok(())
         })
     }

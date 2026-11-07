@@ -4,11 +4,12 @@
 //! so the engine thread never waits on the platform. [`use_secure_value`] reads one key as a
 //! reactive value that follows the writes made through the same store.
 
-mod backend;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod apple;
+mod backend;
 mod error;
 mod memory;
+mod native;
 mod options;
 mod reactive;
 mod store;
@@ -22,7 +23,17 @@ pub use options::{
     AccessControlFlag, AndroidBiometricType, AndroidOptions, AppleOptions, AuthenticationUi,
     CallOptions, ContainsKeyOptions, DeleteAllOptions, DeleteOptions, IosOptions,
     KeychainAccessibility, LinuxOptions, MacOsOptions, PlatformOptions, ReadAllOptions,
-    ReadOptions, SecureStorageOptions, WindowsOptions, WebOptions, WriteOptions,
+    ReadOptions, SecureStorageOptions, WebOptions, WindowsOptions, WriteOptions,
 };
 pub use reactive::{SecureValue, SecureValueState, use_secure_value};
 pub use store::{SecureStorage, Subscription};
+
+pub use native::{NativeSecureStorage, StoreOptions, StoredEntry};
+
+use nsh_core::prelude::*;
+
+/// The crate's UI set: what TSX imports from `nsh-secure-storage/native`.
+#[native_module("nsh-secure-storage/native")]
+fn native(registry: &mut Registry) {
+    registry.class::<NativeSecureStorage>();
+}

@@ -15,6 +15,9 @@ use nsh_secure_storage::{
 };
 use zeroize::Zeroizing;
 
+/// A store operation's pending result, boxed so several can wait together.
+type Pending = Pin<Box<dyn Future<Output = Result<(), SecureStorageError>> + 'static>>;
+
 /// Runs one future to its end on this thread.
 fn block_on<T>(future: impl Future<Output = T>) -> T {
     struct Unpark(thread::Thread);
@@ -83,14 +86,15 @@ fn read_all_and_delete_all() {
         .into_iter()
         .map(|(k, v)| (k.to_owned(), v.to_owned()))
         .collect();
-    let got: BTreeMap<String, String> = all
-        .into_iter()
-        .map(|(k, v)| (k, v.to_string()))
-        .collect();
+    let got: BTreeMap<String, String> = all.into_iter().map(|(k, v)| (k, v.to_string())).collect();
     assert_eq!(got, expected);
 
     block_on(storage.delete_all(&Default::default())).unwrap();
-    assert!(block_on(storage.read_all(&Default::default())).unwrap().is_empty());
+    assert!(
+        block_on(storage.read_all(&Default::default()))
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]
@@ -204,7 +208,11 @@ fn listeners_are_per_surface() {
     let count = calls.clone();
     let _subscription = first.register_listener("k", move |_| *count.lock().unwrap() += 1);
     write(second, "k", Some("elsewhere"));
-    assert_eq!(*calls.lock().unwrap(), 0, "another surface's write must not reach it");
+    assert_eq!(
+        *calls.lock().unwrap(),
+        0,
+        "another surface's write must not reach it"
+    );
     write(first, "k", Some("here"));
     assert_eq!(*calls.lock().unwrap(), 1);
 
@@ -246,7 +254,10 @@ impl Backend for ProbeBackend {
         value: &'a str,
     ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
         Box::pin(async move {
-            self.log.lock().unwrap().push(format!("start {key}={value}"));
+            self.log
+                .lock()
+                .unwrap()
+                .push(format!("start {key}={value}"));
             YieldOnce(false).await;
             let done = self.inner.write(options, key, value).await;
             self.log.lock().unwrap().push(format!("end {key}={value}"));
@@ -305,12 +316,14 @@ fn probe_backend() -> (Arc<ProbeBackend>, Arc<Mutex<Vec<String>>>) {
 #[test]
 fn concurrent_first_writes_all_land() {
     let storage = SecureStorage::memory();
-    let futures: Vec<Pin<Box<dyn Future<Output = Result<(), SecureStorageError>>>>> = (0..32)
+    let futures: Vec<Pending> = (0..32)
         .map(|i| {
             let key = format!("first-{i}");
             Box::pin(async move {
                 let value = format!("v{i}");
-                storage.write(&key, Some(&value), &WriteOptions::default()).await
+                storage
+                    .write(&key, Some(&value), &WriteOptions::default())
+                    .await
             }) as Pin<Box<dyn Future<Output = Result<(), SecureStorageError>>>>
         })
         .collect();
@@ -328,7 +341,7 @@ fn two_handles_on_one_store_run_in_order() {
     let (backend, log) = probe_backend();
     let first = SecureStorage::with_backend(backend.clone(), Default::default());
     let second = SecureStorage::with_backend(backend, Default::default());
-    let futures: Vec<Pin<Box<dyn Future<Output = Result<(), SecureStorageError>>>>> = vec![
+    let futures: Vec<Pending> = vec![
         Box::pin(async move { first.write("k", Some("1"), &WriteOptions::default()).await }),
         Box::pin(async move { second.write("k", Some("2"), &WriteOptions::default()).await }),
     ];
@@ -356,7 +369,9 @@ fn value_never_reaches_debug_or_an_error() {
     assert!(!format!("{error}").contains(SECRET));
     assert!(!format!("{error:?}").contains(SECRET));
 
-    let failing = SecureStorageError::new(ErrorKind::Backend).with_key("k").with_status(-1);
+    let failing = SecureStorageError::new(ErrorKind::Backend)
+        .with_key("k")
+        .with_status(-1);
     let rendered = format!("{failing} / {failing:?}");
     assert!(rendered.contains("ERR_SECURE_STORAGE_BACKEND"));
     assert!(rendered.contains("status -1"));

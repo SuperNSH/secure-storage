@@ -3,15 +3,17 @@
 use std::{
     cell::{Cell, RefCell},
     collections::{BTreeMap, HashMap},
+    panic::AssertUnwindSafe,
     rc::Rc,
     sync::{Arc, Mutex, OnceLock, Weak},
+    task::Poll,
 };
 
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use zeroize::Zeroizing;
 
 use crate::{
-    backend::Backend,
+    backend::{Backend, BackendFuture},
     error::{ErrorKind, SecureStorageError},
     options::{
         CallOptions, ContainsKeyOptions, DeleteAllOptions, DeleteOptions, PlatformOptions,
@@ -110,10 +112,9 @@ impl SecureStorage {
         match value {
             Some(value) => {
                 let guard = self.lock(&platform).await;
+                let backend = &*self.surface.backend;
                 let stored = self
-                    .surface
-                    .backend
-                    .write(&platform, key, value)
+                    .with_reset(&platform, || backend.write(&platform, key, value))
                     .await
                     .map_err(|e| e.with_key(key));
                 drop(guard);
@@ -134,9 +135,8 @@ impl SecureStorage {
         check_key(key)?;
         let platform = self.resolve(options);
         self.wait_for_writes(&platform).await;
-        self.surface
-            .backend
-            .read(&platform, key)
+        let backend = &*self.surface.backend;
+        self.with_reset(&platform, || backend.read(&platform, key))
             .await
             .map_err(|e| e.with_key(key))
     }
@@ -150,9 +150,8 @@ impl SecureStorage {
         check_key(key)?;
         let platform = self.resolve(options);
         self.wait_for_writes(&platform).await;
-        self.surface
-            .backend
-            .contains_key(&platform, key)
+        let backend = &*self.surface.backend;
+        self.with_reset(&platform, || backend.contains_key(&platform, key))
             .await
             .map_err(|e| e.with_key(key))
     }
@@ -175,14 +174,16 @@ impl SecureStorage {
     ) -> Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError> {
         let platform = self.resolve(options);
         self.wait_for_writes(&platform).await;
-        self.surface.backend.read_all(&platform).await
+        let backend = &*self.surface.backend;
+        self.with_reset(&platform, || backend.read_all(&platform))
+            .await
     }
 
     /// Removes every value of the store. Each listener is told its key is gone.
     pub async fn delete_all(self, options: &DeleteAllOptions) -> Result<(), SecureStorageError> {
         let platform = self.resolve(options);
         let guard = self.lock(&platform).await;
-        let removed = self.surface.backend.delete_all(&platform).await;
+        let removed = caught(self.surface.backend.delete_all(&platform)).await;
         drop(guard);
         removed?;
         for listener in self.listeners_snapshot() {
@@ -265,6 +266,32 @@ impl SecureStorage {
         }
     }
 
+    /// Runs a backend call. Only a permanent key failure triggers a reset, and only when the store
+    /// opted in with `reset_on_error`. The retry runs once, after the reset, and never again.
+    async fn with_reset<'a, T>(
+        &self,
+        platform: &'a PlatformOptions,
+        call: impl Fn() -> BackendFuture<'a, Result<T, SecureStorageError>>,
+    ) -> Result<T, SecureStorageError> {
+        match caught(call()).await {
+            Err(error)
+                if error.kind() == ErrorKind::KeyInvalidated && platform.android.reset_on_error =>
+            {
+                caught(self.surface.backend.reset_store(platform))
+                    .await
+                    .map_err(|_| SecureStorageError::new(ErrorKind::ResetFailed))?;
+                caught(call()).await.map_err(|error| {
+                    if error.kind() == ErrorKind::KeyInvalidated {
+                        SecureStorageError::new(ErrorKind::ResetFailed)
+                    } else {
+                        error
+                    }
+                })
+            }
+            other => other,
+        }
+    }
+
     /// Takes the store's lock for a write or a delete, so it runs after the writes before it.
     async fn lock(&self, platform: &PlatformOptions) -> OwnedMutexGuard<()> {
         let id = self.surface.backend.store_id(platform);
@@ -284,10 +311,7 @@ impl SecureStorage {
         platform: &PlatformOptions,
     ) -> Result<(), SecureStorageError> {
         let guard = self.lock(platform).await;
-        let removed = self
-            .surface
-            .backend
-            .delete(platform, key)
+        let removed = caught(self.surface.backend.delete(platform, key))
             .await
             .map_err(|e| e.with_key(key));
         drop(guard);
@@ -301,6 +325,21 @@ impl std::fmt::Debug for SecureStorage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SecureStorage")
     }
+}
+
+/// Polls one backend call, turning a panic inside it into a `Backend` error. The call's future is
+/// dropped there, so the store's lock is released and the store stays usable.
+async fn caught<T>(
+    mut call: BackendFuture<'_, Result<T, SecureStorageError>>,
+) -> Result<T, SecureStorageError> {
+    std::future::poll_fn(move |cx| {
+        match std::panic::catch_unwind(AssertUnwindSafe(|| call.as_mut().poll(cx))) {
+            Ok(Poll::Ready(result)) => Poll::Ready(result),
+            Ok(Poll::Pending) => Poll::Pending,
+            Err(_) => Poll::Ready(Err(SecureStorageError::new(ErrorKind::Backend))),
+        }
+    })
+    .await
 }
 
 /// Rejects keys a platform cannot store: empty ones and ones with a NUL character.

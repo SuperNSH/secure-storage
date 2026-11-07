@@ -5,7 +5,10 @@ use std::{collections::BTreeMap, future::Future, pin::Pin, rc::Rc};
 
 use zeroize::Zeroizing;
 
-use crate::{error::SecureStorageError, options::PlatformOptions};
+use crate::{
+    error::{ErrorKind, SecureStorageError},
+    options::PlatformOptions,
+};
 
 /// A backend's pending operation. Not `Send`, so the web can implement it too.
 pub type BackendFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
@@ -59,6 +62,16 @@ pub trait Backend: Send + Sync {
         &'a self,
         options: &'a PlatformOptions,
     ) -> BackendFuture<'a, Result<(), SecureStorageError>>;
+
+    /// Deletes the store's key material and every value, so the next write starts fresh. The core
+    /// calls it at most once per operation, and only after a permanent key failure with
+    /// `reset_on_error` set.
+    fn reset_store<'a>(
+        &'a self,
+        _options: &'a PlatformOptions,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async { Err(SecureStorageError::new(ErrorKind::NotAvailable)) })
+    }
 
     /// Whether the platform's protected data is readable now. Only iOS can say no.
     fn is_protected_data_available(&self) -> bool {

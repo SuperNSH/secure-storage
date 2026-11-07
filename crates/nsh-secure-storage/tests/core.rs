@@ -342,13 +342,22 @@ fn concurrent_first_writes_all_land() {
 
 #[test]
 fn two_handles_same_store_serialize_init() {
-    // Two handles on one backend: the writes must not interleave, and a read after both sees the later one.
+    // Three handles on two surfaces of one backend run their first operations at once. The writes
+    // must not interleave, and a read queued between them sees the write before it, not the one after.
     let (backend, log) = probe_backend();
     let first = SecureStorage::with_backend(backend.clone(), Default::default());
-    let second = SecureStorage::with_backend(backend, Default::default());
+    let second = SecureStorage::with_backend(backend.clone(), Default::default());
+    let third = SecureStorage::with_backend(backend, Default::default());
+    let seen = Arc::new(Mutex::new(None::<String>));
+    let read_seen = seen.clone();
     let futures: Vec<Pending> = vec![
         Box::pin(async move { first.write("k", Some("1"), &WriteOptions::default()).await }),
-        Box::pin(async move { second.write("k", Some("2"), &WriteOptions::default()).await }),
+        Box::pin(async move {
+            let value = second.read("k", &ReadOptions::default()).await?;
+            *read_seen.lock().unwrap() = value.map(|v| v.to_string());
+            Ok(())
+        }),
+        Box::pin(async move { third.write("k", Some("2"), &WriteOptions::default()).await }),
     ];
     for result in join_all(futures) {
         result.unwrap();
@@ -357,6 +366,11 @@ fn two_handles_same_store_serialize_init() {
         *log.lock().unwrap(),
         vec!["start k=1", "end k=1", "start k=2", "end k=2"],
         "one store's writes must run one at a time, in order"
+    );
+    assert_eq!(
+        seen.lock().unwrap().as_deref(),
+        Some("1"),
+        "a read queued after the first write sees it, and not the later one"
     );
     assert_eq!(read_value(first, "k").as_deref(), Some("2"));
 }
@@ -609,9 +623,242 @@ fn backend_load_failure_is_coded_error() {
     let error = block_on(storage.read("k", &ReadOptions::default())).unwrap_err();
     assert_eq!(error.code(), "ERR_SECURE_STORAGE_BACKEND");
     assert_eq!(error.key(), Some("k"), "the key is named");
+
+    // A backend that panics inside a call: the caller gets a coded error, and the store still works.
+    let backend = Arc::new(ScriptedBackend::default());
+    backend
+        .panic_writes
+        .store(1, std::sync::atomic::Ordering::SeqCst);
+    let storage = SecureStorage::with_backend(backend, Default::default());
+    let error = block_on(storage.write("k", Some("v"), &WriteOptions::default())).unwrap_err();
+    assert_eq!(error.code(), "ERR_SECURE_STORAGE_BACKEND");
+    assert_eq!(error.key(), Some("k"), "the key is named after a panic");
+    write(storage, "k", Some("after-panic"));
+    assert_eq!(read_value(storage, "k").as_deref(), Some("after-panic"));
 }
 
 #[test]
 fn reset_on_error_defaults_to_false() {
     assert!(!AndroidOptions::default().reset_on_error);
+}
+
+/// A memory store that fails, panics and resets on demand, to test the rules the core keeps
+/// around a backend.
+#[derive(Default)]
+struct ScriptedBackend {
+    inner: MemoryBackend,
+    /// While set, every call fails with this kind.
+    fail: Mutex<Option<ErrorKind>>,
+    /// How many of the next writes panic.
+    panic_writes: std::sync::atomic::AtomicUsize,
+    /// Calls that reached the backend, not counting resets.
+    attempts: std::sync::atomic::AtomicUsize,
+    /// Calls to `reset_store`.
+    resets: std::sync::atomic::AtomicUsize,
+    /// A reset fails.
+    reset_fails: std::sync::atomic::AtomicBool,
+    /// A reset clears the failure, as a fresh key does.
+    reset_heals: std::sync::atomic::AtomicBool,
+}
+
+impl ScriptedBackend {
+    fn gate(&self) -> Result<(), SecureStorageError> {
+        self.attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        match *self.fail.lock().unwrap() {
+            Some(kind) => Err(SecureStorageError::new(kind)),
+            None => Ok(()),
+        }
+    }
+
+    fn count(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn fail_with(&self, kind: ErrorKind) {
+        *self.fail.lock().unwrap() = Some(kind);
+    }
+}
+
+impl Backend for ScriptedBackend {
+    fn store_id(&self, options: &nsh_secure_storage::PlatformOptions) -> String {
+        self.inner.store_id(options)
+    }
+
+    fn write<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+        value: &'a str,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            if self.panic_writes.load(std::sync::atomic::Ordering::SeqCst) > 0 {
+                self.panic_writes
+                    .fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                panic!("the backend panicked");
+            }
+            self.gate()?;
+            self.inner.write(options, key, value).await
+        })
+    }
+
+    fn read<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<Option<Zeroizing<String>>, SecureStorageError>> {
+        Box::pin(async move {
+            self.gate()?;
+            self.inner.read(options, key).await
+        })
+    }
+
+    fn contains_key<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<bool, SecureStorageError>> {
+        Box::pin(async move {
+            self.gate()?;
+            self.inner.contains_key(options, key).await
+        })
+    }
+
+    fn delete<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+        key: &'a str,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.gate()?;
+            self.inner.delete(options, key).await
+        })
+    }
+
+    fn read_all<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+    ) -> BackendFuture<'a, Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError>> {
+        Box::pin(async move {
+            self.gate()?;
+            self.inner.read_all(options).await
+        })
+    }
+
+    fn delete_all<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.gate()?;
+            self.inner.delete_all(options).await
+        })
+    }
+
+    fn reset_store<'a>(
+        &'a self,
+        options: &'a nsh_secure_storage::PlatformOptions,
+    ) -> BackendFuture<'a, Result<(), SecureStorageError>> {
+        Box::pin(async move {
+            self.resets
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.reset_fails.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(SecureStorageError::new(ErrorKind::Backend));
+            }
+            if self.reset_heals.load(std::sync::atomic::Ordering::SeqCst) {
+                *self.fail.lock().unwrap() = None;
+            }
+            self.inner.delete_all(options).await
+        })
+    }
+}
+
+/// A store that resets on a permanent key failure, as Android's `reset_on_error` does.
+fn resetting_store(backend: Arc<ScriptedBackend>) -> SecureStorage {
+    let mut options = nsh_secure_storage::SecureStorageOptions::default();
+    options.platform.android.reset_on_error = true;
+    SecureStorage::with_backend(backend, options)
+}
+
+#[test]
+fn reset_on_error_off_never_resets() {
+    let backend = Arc::new(ScriptedBackend::default());
+    backend.fail_with(ErrorKind::KeyInvalidated);
+    let storage = SecureStorage::with_backend(backend.clone(), Default::default());
+    let error = block_on(storage.write("k", Some("v"), &WriteOptions::default())).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::KeyInvalidated);
+    assert_eq!(ScriptedBackend::count(&backend.resets), 0);
+}
+
+#[test]
+fn reset_on_error_runs_at_most_once() {
+    // The fresh key fails too, so the store is reset once, retried once, and then reports it.
+    let backend = Arc::new(ScriptedBackend::default());
+    backend.fail_with(ErrorKind::KeyInvalidated);
+    let storage = resetting_store(backend.clone());
+    let error = block_on(storage.write("k", Some("v"), &WriteOptions::default())).unwrap_err();
+    assert_eq!(error.code(), "ERR_SECURE_STORAGE_RESET_FAILED");
+    assert_eq!(
+        ScriptedBackend::count(&backend.resets),
+        1,
+        "one reset per call"
+    );
+    assert_eq!(
+        ScriptedBackend::count(&backend.attempts),
+        2,
+        "the first attempt and one retry, never a third"
+    );
+}
+
+#[test]
+fn reset_on_error_recovers_with_one_reset() {
+    let backend = Arc::new(ScriptedBackend::default());
+    backend.fail_with(ErrorKind::KeyInvalidated);
+    backend
+        .reset_heals
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let storage = resetting_store(backend.clone());
+    write(storage, "k", Some("fresh"));
+    assert_eq!(read_value(storage, "k").as_deref(), Some("fresh"));
+    assert_eq!(ScriptedBackend::count(&backend.resets), 1);
+}
+
+#[test]
+fn transient_error_never_resets() {
+    let backend = Arc::new(ScriptedBackend::default());
+    backend.fail_with(ErrorKind::Backend);
+    let storage = resetting_store(backend.clone());
+    let error = block_on(storage.read("k", &ReadOptions::default())).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        ErrorKind::Backend,
+        "a transient error is reported as it is"
+    );
+    assert_eq!(
+        ScriptedBackend::count(&backend.resets),
+        0,
+        "and never resets the store"
+    );
+    assert_eq!(
+        ScriptedBackend::count(&backend.attempts),
+        1,
+        "and is not retried"
+    );
+}
+
+#[test]
+fn failed_reset_is_reset_failed_without_retry() {
+    let backend = Arc::new(ScriptedBackend::default());
+    backend.fail_with(ErrorKind::KeyInvalidated);
+    backend
+        .reset_fails
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let storage = resetting_store(backend.clone());
+    let error = block_on(storage.write("k", Some("v"), &WriteOptions::default())).unwrap_err();
+    assert_eq!(error.code(), "ERR_SECURE_STORAGE_RESET_FAILED");
+    assert_eq!(
+        ScriptedBackend::count(&backend.attempts),
+        1,
+        "no retry after a failed reset"
+    );
 }

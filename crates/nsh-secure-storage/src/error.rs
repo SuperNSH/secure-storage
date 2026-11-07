@@ -22,6 +22,8 @@ pub enum ErrorKind {
     MissingEntitlement,
     /// The key is empty or contains a NUL character.
     InvalidKey,
+    /// The key was invalidated, the store was reset, and the retry failed too.
+    ResetFailed,
     /// The platform store failed; `status` holds its own code where it has one.
     Backend,
 }
@@ -86,6 +88,7 @@ impl SecureStorageError {
             ErrorKind::AuthFailed => "ERR_SECURE_STORAGE_AUTH_FAILED",
             ErrorKind::MissingEntitlement => "ERR_SECURE_STORAGE_MISSING_ENTITLEMENT",
             ErrorKind::InvalidKey => "ERR_SECURE_STORAGE_INVALID_KEY",
+            ErrorKind::ResetFailed => "ERR_SECURE_STORAGE_RESET_FAILED",
             ErrorKind::Backend => "ERR_SECURE_STORAGE_BACKEND",
         }
     }
@@ -107,6 +110,9 @@ impl SecureStorageError {
                 "The app is not signed with the keychain access group it asks for. Add that group to the app's keychain-access-groups entitlement and sign the app with it."
             }
             ErrorKind::InvalidKey => "The key must not be empty or contain a NUL character.",
+            ErrorKind::ResetFailed => {
+                "The key was invalidated and the store was reset, but the data still cannot be used."
+            }
             ErrorKind::Backend => "The platform's secret store failed.",
         }
     }

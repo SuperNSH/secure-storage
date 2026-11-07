@@ -9,11 +9,25 @@ use std::{
     sync::Once,
 };
 
+use core_foundation::string::CFStringRef;
+use core_foundation::{
+    base::{CFType, CFTypeRef, TCFType},
+    date::CFDate,
+};
 use nsh_secure_storage::{
     AccessControlFlag, AuthenticationUi, ErrorKind, KeychainAccessibility, MacOsOptions,
     PlatformOptions, ReadOptions, SecureStorage, SecureStorageOptions, WriteOptions,
 };
-use security_framework::os::macos::keychain::{CreateOptions, SecKeychain};
+use security_framework::{
+    item::{ItemClass, ItemSearchOptions, Limit, SearchResult},
+    os::macos::keychain::{CreateOptions, SecKeychain},
+};
+
+// `security-framework-sys` does not export this attribute name, so the test declares it.
+#[link(name = "Security", kind = "framework")]
+unsafe extern "C" {
+    static kSecAttrCreationDate: CFStringRef;
+}
 
 /// Turns keychain interaction off for this whole test process, once, before any keychain call.
 /// Then no test can open a system dialog: a call that would ask fails with `errSecInteractionNotAllowed`.
@@ -121,15 +135,90 @@ fn macos_keychain_round_trip() {
     assert!(!run(storage.contains_key("token", &Default::default())).unwrap());
 }
 
+/// The creation date of the item of `service` and `account` in `keychain`, as the keychain sets it.
+fn creation_date(keychain: &Path, service: &str, account: &str) -> f64 {
+    let keychain = SecKeychain::open(keychain).expect("the throwaway keychain opens");
+    let found = ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .keychains(&[keychain])
+        .service(service)
+        .account(account)
+        .load_attributes(true)
+        .limit(Limit::All)
+        .search()
+        .expect("the item is searched for");
+    let [SearchResult::Dict(attributes)] = found.as_slice() else {
+        panic!("exactly one item is expected");
+    };
+    let date = attributes
+        // SAFETY: Security exports this constant once the framework is loaded.
+        .find(unsafe { kSecAttrCreationDate } as *const std::ffi::c_void)
+        .expect("the item has a creation date");
+    // SAFETY: the keychain returns a CFDate for this attribute, and the dictionary keeps it alive.
+    let date = unsafe { CFType::wrap_under_get_rule(*date as CFTypeRef) };
+    date.downcast::<CFDate>()
+        .expect("the creation date is a CFDate")
+        .abs_time()
+}
+
 #[test]
 fn apple_write_overwrites_without_delete() {
+    // A delete then an add would give the item a new creation date; an update keeps the date.
     let scratch = ScratchKeychain::create("update");
     let storage = store(&scratch.path, "nss-update");
     write(storage, "k", "one");
+    let created = creation_date(&scratch.path, "nss-update", "k");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
     write(storage, "k", "two");
     assert_eq!(read(storage, "k").as_deref(), Some("two"));
+    assert_eq!(
+        creation_date(&scratch.path, "nss-update", "k"),
+        created,
+        "an update must keep the item: a delete then add gives it a new creation date"
+    );
     let all = run(storage.read_all(&Default::default())).unwrap();
     assert_eq!(all.len(), 1, "an update must not add a second item");
+}
+
+#[test]
+fn apple_transient_failure_keeps_item() {
+    // A locked keychain is a transient failure: a read, a write and a delete fail, and the item stays.
+    let scratch = ScratchKeychain::create("transient");
+    write(store(&scratch.path, "nss-transient"), "k", "keep-me");
+    let mut platform = options(&scratch.path, "nss-transient");
+    platform.macos.apple.authentication_ui = Some(AuthenticationUi::Fail);
+    let guarded = SecureStorage::new(with_platform(platform));
+
+    lock_keychain(&scratch.path);
+    let read_error = run(guarded.read("k", &ReadOptions::default())).unwrap_err();
+    assert_eq!(read_error.kind(), ErrorKind::Locked);
+    assert!(run(guarded.write("k", Some("replaced"), &WriteOptions::default())).is_err());
+    assert!(run(guarded.delete("k", &Default::default())).is_err());
+    unlock_keychain(&scratch.path);
+
+    assert_eq!(
+        read(store(&scratch.path, "nss-transient"), "k").as_deref(),
+        Some("keep-me"),
+        "the failed write and delete left the item alone"
+    );
+}
+
+fn lock_keychain(path: &Path) {
+    let status = Command::new("security")
+        .arg("lock-keychain")
+        .arg(path)
+        .status()
+        .expect("the security tool runs");
+    assert!(status.success(), "the throwaway keychain locks");
+}
+
+fn unlock_keychain(path: &Path) {
+    let status = Command::new("security")
+        .args(["unlock-keychain", "-p", "throwaway-test-password"])
+        .arg(path)
+        .status()
+        .expect("the security tool runs");
+    assert!(status.success(), "the throwaway keychain unlocks");
 }
 
 #[test]

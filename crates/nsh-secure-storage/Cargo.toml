@@ -12,7 +12,7 @@ name = "nsh_secure_storage"
 path = "src/lib.rs"
 
 [dependencies]
-nsh-core = "0.4.0"
+nsh-core = "0.5.0"
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
 zeroize = "1.9.1"
 
@@ -39,7 +39,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 
 # The web backend: WebCrypto and IndexedDB, on the wasm32 target only. The versions are the ones
-# NSH 0.4.0 links, because `nsh` runs the wasm-bindgen CLI of the same version (docs/decisions.md).
+# NSH 0.5.0 links (as 0.4.0 did), because `nsh` runs the wasm-bindgen CLI of the same version (docs/decisions.md).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4.79"
@@ -67,8 +67,8 @@ web-sys = { version = "0.3.106", features = [
 ] }
 
 [dev-dependencies]
-nsh-engine = { version = "0.4.0", default-features = false }
-nsh-testing = { version = "0.4.0", default-features = false }
+nsh-engine = { version = "0.5.0", default-features = false }
+nsh-testing = { version = "0.5.0", default-features = false }
 # Gives the Keychain tests the blocking pool that `nsh_core::blocking` uses inside an engine.
 tokio = { version = "1.54.1", default-features = false, features = ["rt"] }
 # The host tests run the Android store logic against a fake Keystore that really seals with AES-GCM.

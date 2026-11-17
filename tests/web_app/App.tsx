@@ -1,6 +1,6 @@
 // The web test app: each button runs one store call and shows its outcome as text, so the
 // headless browser test (App.test.tsx) can drive it with presses and read what it shows.
-import { mount, signal, Text, View } from "nsh";
+import { host, mount, signal, Text, View } from "nsh";
 import { NativeSecureStorage } from "nsh-secure-storage/native";
 
 const store = new NativeSecureStorage();
@@ -37,6 +37,8 @@ function App() {
     }],
     ["Write empty", async () => { await store.write("token", ""); return "empty written"; }],
     ["Write nul", async () => { await store.write("bad\u0000key", "x"); return "nul written"; }],
+    // The page's host (host.js) reloads the page; the status shows "idle" again once it has.
+    ["Reload", async () => { host.post("page.reload"); return "reloading"; }],
   ];
 
   return (

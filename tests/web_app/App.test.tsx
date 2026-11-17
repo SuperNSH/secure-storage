@@ -10,6 +10,36 @@ async function fresh() {
   return app;
 }
 
+/** The steps' errors while the page is gone: it reloads, then connects again as a new page. */
+const RELOADING = ["no host that takes test steps is connected", "the host left"];
+
+function reloading(error: unknown): boolean {
+  return RELOADING.some((message) => String(error).includes(message));
+}
+
+/**
+ * Presses Reload and waits for the new page. The press's own wait for the app to settle can meet
+ * the page gone, and `waitFor` fails at once without a page, so this looks again until "idle",
+ * which only a fresh load shows, is on screen.
+ */
+async function reload(app: Awaited<ReturnType<typeof open>>) {
+  try {
+    await app.press("role:button[Reload]");
+  } catch (error) {
+    if (!reloading(error)) throw error;
+  }
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try {
+      if (app.shows("text:idle")) return;
+    } catch (error) {
+      if (!reloading(error)) throw error;
+    }
+    if (Date.now() > deadline) throw new Error("the page did not load again in 10 s");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 test("a value is written, read, listed, checked and deleted", async () => {
   const app = await fresh();
   await app.press("role:button[Write]");
@@ -62,11 +92,12 @@ test("a key with a NUL character is refused with its code", async () => {
   await app.waitFor("text:error ERR_SECURE_STORAGE_INVALID_KEY");
 });
 
-test("a value written by one page is read by another", async () => {
-  const writer = await fresh();
-  await writer.press("role:button[Write]");
-  await writer.waitFor("text:written");
-  const reader = await open("./App.tsx");
-  await reader.press("role:button[Read]");
-  await reader.waitFor("text:read [s3cret-test-value]");
+test("a value written by one page is read by the next load of it", async () => {
+  // Each `open` gets storage of its own, so the other page is a reload of the same one.
+  const app = await fresh();
+  await app.press("role:button[Write]");
+  await app.waitFor("text:written");
+  await reload(app);
+  await app.press("role:button[Read]");
+  await app.waitFor("text:read [s3cret-test-value]");
 });

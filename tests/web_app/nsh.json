@@ -3,5 +3,14 @@
   "id": "dev.supernsh.securestorage.webtests",
   "version": "0.1.0",
   "build": 1,
-  "rust": "../../crates/nsh-secure-storage"
+  "rust": "../../crates/nsh-secure-storage",
+  "capabilities": {
+    "host": [
+      "page.reload"
+    ],
+    "statusBar": true
+  },
+  "web": {
+    "host": "./host.js"
+  }
 }

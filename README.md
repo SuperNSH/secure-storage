@@ -216,7 +216,7 @@ A host rejects with a message that starts with the code, as `ERR_SECURE_STORAGE_
 | iOS | Keychain, through the Apple backend | Builds for the iOS simulator (`cargo check`). Not run on a device or simulator here. |
 | iOS embedding | `native/ios/SecureStorageHost.swift` | Typechecked against the iOS SDK. Not run in a host app. |
 | Android embedding | `native/android/SecureStorageHost.kt` | Compiled with the Kotlin 2 compiler against `android-37.0`. Not run on a device. |
-| Android | AndroidKeyStore, through the crate | Store logic tested on every host against a fake Keystore; Android target linted in CI. Not run on a device. Biometric prompts are not built, so do not set `enforceBiometrics` or `requireBiometricsPerOperation`. |
+| Android | AndroidKeyStore, through the crate | Store logic tested on every host against a fake Keystore; Android target linted in CI. Biometric prompt rules are tested against a scripted prompt; the real `BiometricPrompt` has not been run on a device. |
 | Linux | Secret Service, through the crate | Tested against a real gnome-keyring in CI: round trip, scoped `read_all` and `delete_all`, 1 MiB, locked and missing service. |
 | Windows | Credential Manager, through the crate | Tested against `keyring-core`'s mock store only. The real Credential Manager has not been run. |
 | Web | WebCrypto and IndexedDB, through the crate | Browser-tested for the basic calls and a reload. No real secret store: see `docs/platforms.md`. |

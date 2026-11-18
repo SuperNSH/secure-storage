@@ -245,18 +245,16 @@ impl Harness {
 
     /// A store whose key needs a biometric check, once per unlock window.
     fn enforced() -> Self {
-        Self {
-            enforce_biometrics: true,
-            ..Self::new(false)
-        }
+        let mut harness = Self::new(false);
+        harness.enforce_biometrics = true;
+        harness
     }
 
     /// A store whose key needs a biometric check on every call.
     fn per_operation(reset_on_error: bool) -> Self {
-        Self {
-            per_operation: true,
-            ..Self::new(reset_on_error)
-        }
+        let mut harness = Self::new(reset_on_error);
+        harness.per_operation = true;
+        harness
     }
 
     /// The user's next prompts end as `outcomes`.

@@ -2,7 +2,7 @@
 //! Assertions on values use `assert!` with no message: a failed test must not print a value.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     fs,
     future::Future,
     path::{Path, PathBuf},
@@ -45,6 +45,12 @@ struct State {
     created: usize,
     deleted: usize,
     nonce: u64,
+    /// Whether the user has authenticated, so a key that needs it can be used.
+    unlocked: bool,
+    /// How many times the prompt was shown.
+    prompts: usize,
+    /// What the next prompts end as. An empty queue means the user passes.
+    outcomes: VecDeque<Result<(), VaultError>>,
 }
 
 /// The fake Keystore. It keeps its keys in memory and seals with AES-256-GCM, so a wrong key or
@@ -129,11 +135,25 @@ impl Keystore for Fake {
         })
     }
 
+    fn authenticate(&self, _policy: &Policy) -> Result<(), VaultError> {
+        self.with(|s| {
+            s.prompts += 1;
+            let outcome = s.outcomes.pop_front().unwrap_or(Ok(()));
+            if outcome.is_ok() {
+                s.unlocked = true;
+            }
+            outcome
+        })
+    }
+
     fn seal(&self, policy: &Policy, aad: &[u8], plaintext: &[u8]) -> Result<Sealed, VaultError> {
         let alias = policy.alias();
         let (key, iv) = self.with(|s| {
             if s.panic_on_seal {
                 panic!("the fake keystore panics on purpose");
+            }
+            if policy.user_auth && !s.unlocked {
+                return Err(VaultError::Locked);
             }
             if let Some(error) = s.fail_seal {
                 return Err(error);
@@ -168,6 +188,9 @@ impl Keystore for Fake {
     ) -> Result<Zeroizing<Vec<u8>>, VaultError> {
         let alias = policy.alias();
         let key = self.with(|s| {
+            if policy.user_auth && !s.unlocked {
+                return Err(VaultError::Locked);
+            }
             if let Some(error) = s.fail_open {
                 return Err(error);
             }
@@ -199,6 +222,8 @@ struct Harness {
     fake: Arc<Fake>,
     dir: PathBuf,
     reset_on_error: bool,
+    enforce_biometrics: bool,
+    per_operation: bool,
 }
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
@@ -213,13 +238,48 @@ impl Harness {
             fake: Fake::new(dir.clone()),
             dir,
             reset_on_error,
+            enforce_biometrics: false,
+            per_operation: false,
         }
+    }
+
+    /// A store whose key needs a biometric check, once per unlock window.
+    fn enforced() -> Self {
+        Self {
+            enforce_biometrics: true,
+            ..Self::new(false)
+        }
+    }
+
+    /// A store whose key needs a biometric check on every call.
+    fn per_operation(reset_on_error: bool) -> Self {
+        Self {
+            per_operation: true,
+            ..Self::new(reset_on_error)
+        }
+    }
+
+    /// The user's next prompts end as `outcomes`.
+    fn script(&self, outcomes: impl IntoIterator<Item = Result<(), VaultError>>) {
+        self.fake.with(|s| s.outcomes.extend(outcomes));
+    }
+
+    /// How many prompts were shown so far.
+    fn prompts(&self) -> usize {
+        self.fake.with(|s| s.prompts)
+    }
+
+    /// The unlock window ends, as it does after the key's timeout.
+    fn relock(&self) {
+        self.fake.with(|s| s.unlocked = false);
     }
 
     /// A handle on the store named `namespace` (the default store when `None`).
     fn store(&self, namespace: Option<&str>) -> SecureStorage {
         let android = AndroidOptions {
             reset_on_error: self.reset_on_error,
+            enforce_biometrics: self.enforce_biometrics,
+            require_biometrics_per_operation: self.per_operation,
             storage_namespace: namespace.map(str::to_owned),
             ..AndroidOptions::default()
         };
@@ -594,4 +654,123 @@ fn require_strong_box_without_strongbox_is_not_available() {
     // No key and no file are made when the device cannot give the key.
     assert_eq!(h.counts(), (0, 0));
     assert!(!h.file().exists());
+}
+
+#[test]
+fn per_operation_biometric_prompts_every_call() {
+    let h = Harness::per_operation(false);
+    put(h.s(), "a", "1").unwrap();
+    assert_eq!(h.prompts(), 1);
+    // The fake stays unlocked, so only the store's own rule can ask again.
+    assert!(holds(h.s(), "a", Some("1")));
+    assert!(holds(h.s(), "a", Some("1")));
+    assert_eq!(h.prompts(), 3);
+    put(h.s(), "b", "2").unwrap();
+    assert_eq!(h.prompts(), 4);
+    // One prompt covers a whole read_all, and a check of presence never prompts.
+    assert_eq!(
+        block_on(h.s().read_all(&Default::default())).unwrap().len(),
+        2
+    );
+    assert!(block_on(h.s().contains_key("a", &Default::default())).unwrap());
+    assert_eq!(h.prompts(), 5);
+    block_on(h.s().delete("a", &Default::default())).unwrap();
+    assert_eq!(h.prompts(), 6);
+    // Nothing to delete, nothing to protect.
+    block_on(h.s().delete("a", &Default::default())).unwrap();
+    assert_eq!(h.prompts(), 6);
+}
+
+#[test]
+fn an_unlocked_key_prompts_only_when_locked() {
+    let h = Harness::enforced();
+    put(h.s(), "a", "1").unwrap();
+    assert_eq!(h.prompts(), 1);
+    assert!(holds(h.s(), "a", Some("1")));
+    assert_eq!(h.prompts(), 1);
+    h.relock();
+    assert!(holds(h.s(), "a", Some("1")));
+    assert_eq!(h.prompts(), 2);
+}
+
+#[test]
+fn a_key_without_user_authentication_never_prompts() {
+    let h = Harness::new(false);
+    put(h.s(), "a", "1").unwrap();
+    h.fake.with(|s| s.fail_open = Some(VaultError::Locked));
+    assert_eq!(
+        code(&get(h.s(), "a").unwrap_err()),
+        "ERR_SECURE_STORAGE_LOCKED"
+    );
+    assert_eq!(h.prompts(), 0);
+}
+
+#[test]
+fn biometric_cancel_resolves_once() {
+    let h = Harness::per_operation(true);
+    h.script([Err(VaultError::Cancelled)]);
+    let error = put(h.s(), "a", "1").unwrap_err();
+    assert_eq!(code(&error), "ERR_SECURE_STORAGE_AUTH_CANCELLED");
+    // One prompt, one answer: no retry, no reset, and nothing written.
+    assert_eq!(h.prompts(), 1);
+    assert!(!h.file().exists());
+    assert_eq!(h.counts().1, 0);
+    // The next call is its own prompt, and works.
+    put(h.s(), "a", "1").unwrap();
+    assert_eq!(h.prompts(), 2);
+    // A cancelled read keeps the entry.
+    h.script([Err(VaultError::Cancelled)]);
+    assert_eq!(
+        code(&get(h.s(), "a").unwrap_err()),
+        "ERR_SECURE_STORAGE_AUTH_CANCELLED"
+    );
+    assert_eq!(h.prompts(), 3);
+    assert_eq!(h.entries(), 1);
+    assert!(holds(h.s(), "a", Some("1")));
+}
+
+#[test]
+fn a_locked_key_cancelled_at_the_prompt_is_not_retried() {
+    let h = Harness::enforced();
+    h.script([Err(VaultError::Cancelled)]);
+    assert_eq!(
+        code(&put(h.s(), "a", "1").unwrap_err()),
+        "ERR_SECURE_STORAGE_AUTH_CANCELLED"
+    );
+    assert_eq!(h.prompts(), 1);
+}
+
+#[test]
+fn prompt_failures_have_their_own_codes() {
+    let h = Harness::per_operation(false);
+    h.script([Err(VaultError::AuthFailed), Err(VaultError::Unavailable)]);
+    assert_eq!(
+        code(&put(h.s(), "a", "1").unwrap_err()),
+        "ERR_SECURE_STORAGE_AUTH_FAILED"
+    );
+    assert_eq!(
+        code(&put(h.s(), "a", "1").unwrap_err()),
+        "ERR_SECURE_STORAGE_NOT_AVAILABLE"
+    );
+    assert_eq!(h.counts().1, 0);
+}
+
+#[test]
+fn invalidated_biometric_key_reports_then_recovers_on_opt_in() {
+    let h = Harness::per_operation(false);
+    put(h.s(), "a", "1").unwrap();
+    h.invalidate();
+    let error = get(h.s(), "a").unwrap_err();
+    assert_eq!(code(&error), "ERR_SECURE_STORAGE_KEY_INVALIDATED");
+    assert_eq!(error.key(), Some("a"));
+    assert_eq!((h.entries(), h.counts()), (1, (1, 0)));
+
+    let h = Harness::per_operation(true);
+    put(h.s(), "a", "1").unwrap();
+    h.invalidate();
+    put(h.s(), "a", "2").unwrap();
+    assert!(holds(h.s(), "a", Some("2")));
+    assert_eq!(h.counts(), (2, 1));
+    // Every call still authenticated: the first put, the failed one, its retry, and the read.
+    assert_eq!(h.prompts(), 4);
 }

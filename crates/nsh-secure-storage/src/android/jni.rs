@@ -26,9 +26,15 @@ const DECRYPT_MODE: jint = 2;
 /// `KeyProperties.AUTH_DEVICE_CREDENTIAL` and `AUTH_BIOMETRIC_STRONG` (API 30).
 const AUTH_DEVICE_CREDENTIAL: jint = 1;
 const AUTH_BIOMETRIC_STRONG: jint = 2;
-/// How long a key stays unlocked after a check, when a check is not per operation. A check per
-/// operation uses zero, which needs a CryptoObject on every use.
+/// `BiometricManager.Authenticators.BIOMETRIC_STRONG` and `DEVICE_CREDENTIAL`, for the prompt.
+const AUTH_STRONG_MASK: jint = 0x000F;
+const AUTH_CREDENTIAL_MASK: jint = 0x8000;
+/// How long a key stays unlocked after a check. The store prompts before every call of a
+/// per-operation key, so its window only has to outlast one call.
 const UNLOCK_SECONDS: jint = 30;
+const PER_OPERATION_SECONDS: jint = 5;
+/// The compiled `BiometricGate` (`native/android/build-dex.sh`), loaded at run time.
+static GATE_DEX: &[u8] = include_bytes!("../../../../native/android/classes.dex");
 
 impl From<jni::errors::Error> for VaultError {
     /// A failure to call at all, with no Java exception to classify, is a plain failure.
@@ -219,25 +225,97 @@ fn take_bytes(env: &mut Env<'_>, object: JObject<'_>) -> Result<Zeroizing<Vec<u8
     Ok(Zeroizing::new(bytes))
 }
 
+/// The running app's `Application`.
+fn application<'local>(env: &mut Env<'local>) -> Result<JObject<'local>, VaultError> {
+    let application = jtry!(
+        env,
+        env.call_static_method(
+            jni_str!("android/app/ActivityThread"),
+            jni_str!("currentApplication"),
+            jni_sig!("()Landroid/app/Application;"),
+            &[],
+        )
+    );
+    let application = jtry!(env, application.l());
+    if application.is_null() {
+        return Err(VaultError::Failed);
+    }
+    Ok(application)
+}
+
+/// A new `BiometricGate`, from the embedded dex. JNI cannot subclass the prompt's abstract
+/// callback, so that class is Java, loaded here by an in-memory class loader.
+fn gate<'local>(env: &mut Env<'local>) -> Result<JObject<'local>, VaultError> {
+    let bytes = jtry!(env, env.byte_array_from_slice(GATE_DEX));
+    let buffer = jtry!(
+        env,
+        env.call_static_method(
+            jni_str!("java/nio/ByteBuffer"),
+            jni_str!("wrap"),
+            jni_sig!("([B)Ljava/nio/ByteBuffer;"),
+            &[JValue::Object(&bytes)],
+        )
+    );
+    let buffer = jtry!(env, buffer.l());
+    let parent = jtry!(
+        env,
+        env.call_static_method(
+            jni_str!("java/lang/ClassLoader"),
+            jni_str!("getSystemClassLoader"),
+            jni_sig!("()Ljava/lang/ClassLoader;"),
+            &[],
+        )
+    );
+    let parent = jtry!(env, parent.l());
+    let loader = jtry!(
+        env,
+        env.new_object(
+            jni_str!("dalvik/system/InMemoryDexClassLoader"),
+            jni_sig!("(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V"),
+            &[JValue::Object(&buffer), JValue::Object(&parent)],
+        )
+    );
+    let name = string(env, "dev.nsh.securestorage.BiometricGate")?;
+    let class = jtry!(
+        env,
+        env.call_method(
+            &loader,
+            jni_str!("loadClass"),
+            jni_sig!("(Ljava/lang/String;)Ljava/lang/Class;"),
+            &[JValue::Object(&name)],
+        )
+    );
+    let class = jtry!(env, class.l());
+    let instance = jtry!(
+        env,
+        env.call_method(
+            &class,
+            jni_str!("newInstance"),
+            jni_sig!("()Ljava/lang/Object;"),
+            &[],
+        )
+    );
+    Ok(jtry!(env, instance.l()))
+}
+
+/// The outcome codes of `BiometricGate`, as a [`VaultError`].
+fn gate_outcome(code: jint) -> Result<(), VaultError> {
+    match code {
+        0 => Ok(()),
+        1 => Err(VaultError::Cancelled),
+        2 => Err(VaultError::AuthFailed),
+        3 => Err(VaultError::Unavailable),
+        _ => Err(VaultError::Failed),
+    }
+}
+
 /// The Keystore, through JNI.
 pub(crate) struct Jni;
 
 impl Keystore for Jni {
     fn no_backup_dir(&self) -> Result<PathBuf, VaultError> {
         attached(|env| {
-            let application = jtry!(
-                env,
-                env.call_static_method(
-                    jni_str!("android/app/ActivityThread"),
-                    jni_str!("currentApplication"),
-                    jni_sig!("()Landroid/app/Application;"),
-                    &[],
-                )
-            );
-            let application = jtry!(env, application.l());
-            if application.is_null() {
-                return Err(VaultError::Failed);
-            }
+            let application = application(env)?;
             let folder = jtry!(
                 env,
                 env.call_method(
@@ -352,7 +430,7 @@ impl Keystore for Jni {
                 };
                 if level >= 30 {
                     let timeout = if policy.per_operation {
-                        0
+                        PER_OPERATION_SECONDS
                     } else {
                         UNLOCK_SECONDS
                     };
@@ -367,7 +445,7 @@ impl Keystore for Jni {
                     );
                 } else {
                     let seconds = if policy.per_operation {
-                        -1
+                        PER_OPERATION_SECONDS
                     } else {
                         UNLOCK_SECONDS
                     };
@@ -439,6 +517,55 @@ impl Keystore for Jni {
                 )
             );
             Ok(())
+        })
+    }
+
+    fn authenticate(&self, policy: &Policy) -> Result<(), VaultError> {
+        attached(|env| {
+            let context = application(env)?;
+            let gate = gate(env)?;
+            let types = if policy.strong_only {
+                AUTH_STRONG_MASK
+            } else {
+                AUTH_STRONG_MASK | AUTH_CREDENTIAL_MASK
+            };
+            let types = types.to_string();
+            let confirmation = if policy.confirmation_required {
+                "true"
+            } else {
+                "false"
+            };
+            let texts = [
+                policy.prompt_title.as_str(),
+                policy.prompt_subtitle.as_str(),
+                policy.prompt_negative.as_str(),
+                types.as_str(),
+                confirmation,
+            ];
+            let arguments = jtry!(
+                env,
+                env.new_object_array(6, jni_str!("java/lang/Object"), JObject::null())
+            );
+            jtry!(env, arguments.set_element(env, 0, &context));
+            for (index, text) in texts.iter().enumerate() {
+                let text = string(env, text)?;
+                jtry!(env, arguments.set_element(env, index + 1, &text));
+            }
+            let result = jtry!(
+                env,
+                env.call_method(
+                    &gate,
+                    jni_str!("apply"),
+                    jni_sig!("(Ljava/lang/Object;)Ljava/lang/Object;"),
+                    &[JValue::Object(&arguments)],
+                )
+            );
+            let result = jtry!(env, result.l());
+            let code = jtry!(
+                env,
+                env.call_method(&result, jni_str!("intValue"), jni_sig!("()I"), &[])
+            );
+            gate_outcome(jtry!(env, code.i()))
         })
     }
 

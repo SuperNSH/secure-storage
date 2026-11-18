@@ -50,6 +50,29 @@ fn create_key(
         .map_err(|error| error.error().with_key(key))
 }
 
+/// Runs `op` on a key that may need user authentication. A per-operation key prompts before every
+/// call. Any other key prompts only when the call finds it locked, and then tries once more, so a
+/// second `Locked` is reported and never loops.
+fn authenticated<T>(
+    keystore: &dyn Keystore,
+    policy: &Policy,
+    op: impl Fn() -> Result<T, VaultError>,
+) -> Result<T, VaultError> {
+    if !policy.user_auth {
+        return op();
+    }
+    if policy.per_operation {
+        return op();
+    }
+    match op() {
+        Err(VaultError::Locked) => {
+            keystore.authenticate(policy)?;
+            op()
+        }
+        other => other,
+    }
+}
+
 /// Opens one sealed entry. Data whose key is gone is reported as `KeyMissing` and kept: a key
 /// that cannot be found is not a permanent signal, so the core never resets for it.
 fn open_entry(
@@ -57,13 +80,18 @@ fn open_entry(
     policy: &Policy,
     key: &str,
     sealed: &Sealed,
+    prompt: bool,
 ) -> Result<Zeroizing<String>, SecureStorageError> {
     if !key_exists(keystore, policy, key)? {
         return Err(SecureStorageError::new(ErrorKind::KeyMissing).with_key(key));
     }
-    let bytes = keystore
-        .open(policy, &aad(policy.namespace(), key), sealed)
-        .map_err(|error| error.error().with_key(key))?;
+    let aad = aad(policy.namespace(), key);
+    let opened = if prompt {
+        authenticated(keystore, policy, || keystore.open(policy, &aad, sealed))
+    } else {
+        keystore.open(policy, &aad, sealed)
+    };
+    let bytes = opened.map_err(|error| error.error().with_key(key))?;
     let text = std::str::from_utf8(&bytes)
         .map_err(|_| SecureStorageError::new(ErrorKind::Corrupt).with_key(key))?;
     Ok(Zeroizing::new(text.to_owned()))
@@ -84,9 +112,11 @@ pub(crate) fn write(
         }
         create_key(keystore, policy, key)?;
     }
-    let sealed = keystore
-        .seal(policy, &aad(policy.namespace(), key), value.as_bytes())
-        .map_err(|error| error.error().with_key(key))?;
+    let aad = aad(policy.namespace(), key);
+    let sealed = authenticated(keystore, policy, || {
+        keystore.seal(policy, &aad, value.as_bytes())
+    })
+    .map_err(|error| error.error().with_key(key))?;
     entries.insert(key.to_owned(), sealed);
     file::save(&path, &entries).map_err(|error| error.with_key(key))
 }
@@ -100,7 +130,7 @@ pub(crate) fn read(
     let path = file_of(keystore, policy)?;
     let entries = file::load(&path).map_err(|error| error.with_key(key))?;
     match entries.get(key) {
-        Some(sealed) => open_entry(keystore, policy, key, sealed).map(Some),
+        Some(sealed) => open_entry(keystore, policy, key, sealed, true).map(Some),
         None => Ok(None),
     }
 }
@@ -124,6 +154,11 @@ pub(crate) fn delete(
 ) -> Result<(), SecureStorageError> {
     let path = file_of(keystore, policy)?;
     let mut entries = file::load(&path).map_err(|error| error.with_key(key))?;
+    if policy.per_operation && entries.contains_key(key) {
+        keystore
+            .authenticate(policy)
+            .map_err(|error| error.error().with_key(key))?;
+    }
     if entries.remove(key).is_some() {
         file::save(&path, &entries).map_err(|error| error.with_key(key))?;
     }
@@ -137,9 +172,14 @@ pub(crate) fn read_all(
 ) -> Result<BTreeMap<String, Zeroizing<String>>, SecureStorageError> {
     let path = file_of(keystore, policy)?;
     let entries = file::load(&path)?;
+    // One prompt covers the whole call: the unlock it gives outlasts the entries' opens.
+    if policy.per_operation && !entries.is_empty() {
+        keystore.authenticate(policy).map_err(VaultError::error)?;
+    }
     let mut all = BTreeMap::new();
     for (key, sealed) in &entries {
-        all.insert(key.clone(), open_entry(keystore, policy, key, sealed)?);
+        let value = open_entry(keystore, policy, key, sealed, !policy.per_operation)?;
+        all.insert(key.clone(), value);
     }
     Ok(all)
 }

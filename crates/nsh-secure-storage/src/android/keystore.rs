@@ -28,6 +28,12 @@ pub(crate) enum VaultError {
     /// The keystore is locked, or the key needs a fresh authentication (`UserNotAuthenticatedException`).
     /// Retrying after unlock may succeed.
     Locked,
+    /// The user cancelled the prompt, pressed its negative button, or let it time out.
+    Cancelled,
+    /// Authentication failed for good, for example a lockout after too many attempts.
+    AuthFailed,
+    /// The device has no biometric hardware, nothing enrolled, or no device credential.
+    Unavailable,
     /// Any other failure, including a platform class that does not load. Never a reason to
     /// replace a key.
     Failed,
@@ -39,7 +45,9 @@ impl VaultError {
         let kind = match self {
             Self::Invalidated => ErrorKind::KeyInvalidated,
             Self::Tag => ErrorKind::Corrupt,
-            Self::NoStrongBox => ErrorKind::NotAvailable,
+            Self::NoStrongBox | Self::Unavailable => ErrorKind::NotAvailable,
+            Self::Cancelled => ErrorKind::AuthCancelled,
+            Self::AuthFailed => ErrorKind::AuthFailed,
             Self::Locked => ErrorKind::Locked,
             Self::Failed => ErrorKind::Backend,
         };
@@ -67,6 +75,11 @@ pub(crate) trait Keystore: Send + Sync {
 
     /// Removes the store's key. Nothing happens when there is none.
     fn delete_key(&self, policy: &Policy) -> Result<(), VaultError>;
+
+    /// Shows the system prompt for a key that needs user authentication, and waits for the one
+    /// outcome. Success unlocks the key for a short time. It never hangs: a prompt that nobody
+    /// answers ends as [`VaultError::Cancelled`].
+    fn authenticate(&self, policy: &Policy) -> Result<(), VaultError>;
 
     /// Encrypts `plaintext` with the store's key, with `aad` as additional data.
     fn seal(&self, policy: &Policy, aad: &[u8], plaintext: &[u8]) -> Result<Sealed, VaultError>;

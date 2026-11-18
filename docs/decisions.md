@@ -9,8 +9,8 @@ The brief asks whether an existing crate covers each platform. The keyring crate
 | Platform | Decision | Why |
 |---|---|---|
 | Apple (iOS, macOS) | Own backend on `security-framework` 3.7.0 and `security-framework-sys` 2.17.0 | `apple-native-keyring-store` uses the same library, but it has no per-item label, comment, description or invisible flags, and no operation prompt text. Upstream's options need those. |
-| Windows | To build on `keyring-core` with `windows-native-keyring-store` | To be confirmed by the agent that builds Windows. The `Backend` trait fits a keyring-core store behind it. |
-| Linux | To build on `keyring-core` with `zbus-secret-service-keyring-store` | To be confirmed by the agent that builds Linux. The `Backend` trait fits a keyring-core store behind it. |
+| Windows | Built on `keyring-core` with `windows-native-keyring-store` | Built on `keyring-core` 1.0.1: one AES key in Credential Manager, values in an AES-GCM file (size limit of Credential Manager). |
+| Linux | Built on `keyring-core` with `zbus-secret-service-keyring-store` | Built on `keyring-core` with the Secret Service, one item per key. |
 | Android | Own JNI backend (AndroidKeyStore AES-GCM, `no_backup` folder) | `android-native-keyring-store` keeps data in SharedPreferences, which Auto Backup includes by default. It has no biometric prompt, and it needs Kotlin start-up code. |
 | Web | Own backend (non-extractable WebCrypto key in IndexedDB) | No secret store exists on the web, so no crate changes what the page can read. |
 
@@ -65,7 +65,7 @@ The `Backend` trait in `src/backend.rs` is the seam. It stays as it is for the o
 ## Platform protection, stated plainly
 
 - Apple: items are protected by the Keychain, at the accessibility level given. `ThisDeviceOnly` levels do not migrate to another device.
-- Web (not built yet): there is no secret store on the web, so a script that runs on the page can read what the page can read. The web backend's docs say so.
+- Web: there is no secret store on the web, so a script that runs on the page can read what the page can read. The web backend's docs say so.
 
 ## Error codes against docs/requirements.md
 
@@ -73,7 +73,7 @@ Codes follow the brief: `ERR_SECURE_STORAGE_*`. The requirements file uses short
 
 ## What each platform protects, and what survives
 
-Apple is built and tested. The other rows describe each platform's design; the agent that builds that backend confirms its row.
+Each row is the platform's design. `docs/platforms.md` says what was run for each.
 
 | Platform | Protects against | Survives uninstall | Survives backup | Survives sync |
 |---|---|---|---|---|

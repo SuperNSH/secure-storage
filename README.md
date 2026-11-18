@@ -216,16 +216,16 @@ A host rejects with a message that starts with the code, as `ERR_SECURE_STORAGE_
 | iOS | Keychain, through the Apple backend | Builds for the iOS simulator (`cargo check`). Not run on a device or simulator here. |
 | iOS embedding | `native/ios/SecureStorageHost.swift` | Typechecked against the iOS SDK. Not run in a host app. |
 | Android embedding | `native/android/SecureStorageHost.kt` | Compiled with the Kotlin 2 compiler against `android-37.0`. Not run on a device. |
-| Android | AndroidKeyStore, through the crate | Pending. |
-| Linux | Secret Service, through the crate | Pending. |
-| Windows | Credential Manager, through the crate | Pending. Not run: there is no Windows machine here. |
-| Web | WebCrypto, through the crate | Pending. |
+| Android | AndroidKeyStore, through the crate | Store logic tested on every host against a fake Keystore; Android target linted in CI. Not run on a device. Biometric prompts are not built, so do not set `enforceBiometrics` or `requireBiometricsPerOperation`. |
+| Linux | Secret Service, through the crate | Tested against a real gnome-keyring in CI: round trip, scoped `read_all` and `delete_all`, 1 MiB, locked and missing service. |
+| Windows | Credential Manager, through the crate | Tested against `keyring-core`'s mock store only. The real Credential Manager has not been run. |
+| Web | WebCrypto and IndexedDB, through the crate | Browser-tested for the basic calls and a reload. No real secret store: see `docs/platforms.md`. |
 
 See [`docs/platforms.md`](docs/platforms.md) for what each row protects and what survives uninstall, backup and transfer.
 
 ### Crates reused, and why
 
-The crate builds on `security-framework` for the Keychain. Apple's keyring crate uses the same library, but it cannot set the per-item label, comment, description or the prompt text that upstream's options need, so the Apple backend is ours. `zeroize` keeps values out of memory after use. Windows and Linux are planned on `keyring-core`, with the store behind the same `Backend` trait. Android uses its own JNI backend, because `android-native-keyring-store` keeps data in SharedPreferences, which Auto Backup includes. The decisions are recorded in [`docs/decisions.md`](docs/decisions.md).
+The crate builds on `security-framework` for the Keychain. Apple's keyring crate uses the same library, but it cannot set the per-item label, comment, description or the prompt text that upstream's options need, so the Apple backend is ours. `zeroize` keeps values out of memory after use. Windows and Linux are built on `keyring-core` (`windows-native-keyring-store` and `zbus-secret-service-keyring-store`), with the store behind the same `Backend` trait. Windows keeps only an AES key in Credential Manager and the values in an AES-GCM file, because Credential Manager limits value size. Android uses its own JNI backend, because `android-native-keyring-store` keeps data in SharedPreferences, which Auto Backup includes. The decisions are recorded in [`docs/decisions.md`](docs/decisions.md).
 
 ## What we learned from upstream
 

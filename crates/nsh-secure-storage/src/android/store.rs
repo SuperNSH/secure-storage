@@ -62,6 +62,7 @@ fn authenticated<T>(
         return op();
     }
     if policy.per_operation {
+        keystore.authenticate(policy)?;
         return op();
     }
     match op() {

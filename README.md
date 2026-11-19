@@ -139,7 +139,7 @@ fun registerSecureStorage(nsh: NshView, host: SecureStorageHost) {
 }
 ```
 
-The two host files are `native/ios/SecureStorageHost.swift` and `native/android/SecureStorageHost.kt`. The Swift sample typechecks against `NshAppView`'s `handle` signatures copied from NativeShell 0.4.0. The Kotlin sample compiles against NSH's own `NshView` sources at 0.4.0. Neither has run inside a host app yet.
+The two host files are `native/ios/SecureStorageHost.swift` and `native/android/SecureStorageHost.kt`. The Swift sample typechecked against `NshAppView`'s `handle` signatures and the Kotlin sample compiled against NSH's own `NshView` sources, both at 0.4.0. The `handle(name, ...)` signatures are unchanged in the 0.6.0 sources (`crates/nsh-platform-ios/swift/NativeShell.swift`, `crates/nsh-platform-android/java/com/longbridge/nsh/NshView.java`); that was checked by reading, not by recompiling. Neither has run inside a host app yet.
 
 ## TypeScript API
 

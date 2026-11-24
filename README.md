@@ -6,14 +6,22 @@ Values are kept in the Keychain on Apple platforms, and in the other stores list
 
 ## Install
 
-The crate is not published yet. Use a checkout of this repository, and point at its `crates/nsh-secure-storage` directory.
+In the app's directory:
+
+```sh
+nsh add nsh-secure-storage
+```
+
+`nsh add` needs NSH main or the nightly: the 0.6.0 and 0.6.1 releases do not have it. In a Rust app, `cargo add nsh-secure-storage` works with any of them.
+
+The TSX imports are `nsh-secure-storage`, `nsh-secure-storage/host`, `nsh-secure-storage/memory` and `nsh-secure-storage/rust`.
 
 ### Rust
 
 ```toml
 # Cargo.toml
 [dependencies]
-nsh-secure-storage = { path = "../secure-storage/crates/nsh-secure-storage" }
+nsh-secure-storage = "0.1.0"
 ```
 
 ```rust
@@ -37,7 +45,7 @@ Every operation takes the store by value and is `async`. A `None` value deletes 
 
 ### Rust with TSX
 
-An app that has the crate under `"rust"` in `nsh.json` can use the store from TSX. The TypeScript side is the `nsh-secure-storage` package in `packages/nsh-secure-storage`, linked into `node_modules`.
+After `nsh add nsh-secure-storage` an app can use the store from TSX. So can one that has a checkout of the crate under `"rust"` in `nsh.json`. In that case the TypeScript side is the `nsh-secure-storage` package in `packages/nsh-secure-storage`, linked into `node_modules`.
 
 ```json
 {

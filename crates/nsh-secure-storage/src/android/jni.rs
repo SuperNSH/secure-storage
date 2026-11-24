@@ -34,7 +34,7 @@ const AUTH_CREDENTIAL_MASK: jint = 0x8000;
 const UNLOCK_SECONDS: jint = 30;
 const PER_OPERATION_SECONDS: jint = 5;
 /// The compiled `BiometricGate` (`native/android/build-dex.sh`), loaded at run time.
-static GATE_DEX: &[u8] = include_bytes!("../../../../native/android/classes.dex");
+static GATE_DEX: &[u8] = include_bytes!("../../android/classes.dex");
 
 impl From<jni::errors::Error> for VaultError {
     /// A failure to call at all, with no Java exception to classify, is a plain failure.

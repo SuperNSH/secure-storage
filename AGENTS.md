@@ -12,3 +12,7 @@ Hard rules for humans and coding agents in this repo.
 - Tests never touch the user's own keychain, keyring or credentials. They use the memory backend, a throwaway keychain, or a device made for testing.
 - Compile and test on GitHub Actions, not on a developer's machine. Push, then read the results with `gh run`.
 - The main branch is `master`.
+
+## Releasing
+
+Bump the version in `Cargo.toml` and `packages/*/package.json` together, add the CHANGELOG entry, push, then tag `vX.Y.Z`. The Publish crates workflow uploads to crates.io once CI has passed on the tagged commit. A crates.io version cannot be replaced, so push the tag only when the release is final. To retry: `gh workflow run publish.yml -f tag=vX.Y.Z`.

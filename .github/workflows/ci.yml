@@ -78,10 +78,10 @@ jobs:
       - name: Install Linux packages
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES
       - run: scripts/publish-crates.sh verify
-      # Only for a crate with #[native_module]; the NSH releases up to 0.6.1 have no `nsh add`.
-      - name: Install NSH nightly
+      # scripts/check-nsh-add.sh runs `nsh add`, which the NSH 0.6.x releases do not have.
+      - name: Install NSH v0.7.1
         env:
-          NSH_VERSION: nightly
+          NSH_VERSION: v0.7.1
         run: |
           curl -fsSL https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -180,7 +180,7 @@ jobs:
           toolchain: stable
       - name: Install NSH
         env:
-          NSH_VERSION: v0.6.0
+          NSH_VERSION: v0.7.1
         run: |
           curl -fsSL https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -202,7 +202,7 @@ jobs:
       - name: Install NSH
         if: runner.os != 'Windows'
         env:
-          NSH_VERSION: v0.6.0
+          NSH_VERSION: v0.7.1
         run: |
           curl -fsSL https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -211,7 +211,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          NSH_VERSION: v0.6.0
+          NSH_VERSION: v0.7.1
         run: |
           irm https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.ps1 | iex
           "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
@@ -268,12 +268,12 @@ jobs:
           tool: wasm-bindgen@0.2.129
       - name: Install Linux packages
         if: runner.os == 'Linux'
-        # NSH 0.6.0's Linux runner links GStreamer.
+        # NSH 0.7.1's Linux runner links GStreamer.
         run: sudo apt-get update && sudo apt-get install -y $LINUX_PACKAGES libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
       - name: Install NSH
         if: runner.os != 'Windows'
         env:
-          NSH_VERSION: v0.6.0
+          NSH_VERSION: v0.7.1
         run: |
           curl -fsSL https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.sh | sh
           echo "$HOME/.nsh/bin" >> "$GITHUB_PATH"
@@ -282,15 +282,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         env:
-          NSH_VERSION: v0.6.0
+          NSH_VERSION: v0.7.1
         run: |
           irm https://raw.githubusercontent.com/SuperNSH/nsh-builds/master/install.ps1 | iex
           "$env:LOCALAPPDATA\nsh\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-      - name: Build NSH's crates from the v0.6.0 source for the iOS package
+      - name: Build NSH's crates from the v0.7.1 source for the iOS package
         if: matrix.target == 'ios-simulator'
         # Added because 0.4.0's crates.io nsh-platform-ios did not package; a local 0.5.0 ios-simulator package built without it.
         run: |
-          git clone --quiet --depth 1 --branch v0.6.0 https://github.com/longbridge/nsh "$RUNNER_TEMP/nsh-src"
+          git clone --quiet --depth 1 --branch v0.7.1 https://github.com/longbridge/nsh "$RUNNER_TEMP/nsh-src"
           mkdir -p examples/demo-rs/.cargo
           {
             echo "[patch.crates-io]"

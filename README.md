@@ -12,7 +12,7 @@ In the app's directory:
 nsh add nsh-secure-storage
 ```
 
-`nsh add` needs NSH main or the nightly: the 0.6.0 and 0.6.1 releases do not have it. In a Rust app, `cargo add nsh-secure-storage` works with any of them.
+`nsh add` needs NSH 0.7.0 or later: the 0.6.0 and 0.6.1 releases do not have it. In a Rust app, `cargo add nsh-secure-storage` pulls in nsh-core 0.7.
 
 The TSX imports are `nsh-secure-storage`, `nsh-secure-storage/host`, `nsh-secure-storage/memory` and `nsh-secure-storage/rust`.
 
@@ -147,7 +147,7 @@ fun registerSecureStorage(nsh: NshView, host: SecureStorageHost) {
 }
 ```
 
-The two host files are `native/ios/SecureStorageHost.swift` and `native/android/SecureStorageHost.kt`. The Swift sample typechecked against `NshAppView`'s `handle` signatures and the Kotlin sample compiled against NSH's own `NshView` sources, both at 0.4.0. The `handle(name, ...)` signatures are unchanged in the 0.6.0 sources (`crates/nsh-platform-ios/swift/NativeShell.swift`, `crates/nsh-platform-android/java/com/longbridge/nsh/NshView.java`); that was checked by reading, not by recompiling. Neither has run inside a host app yet.
+The two host files are `native/ios/SecureStorageHost.swift` and `native/android/SecureStorageHost.kt`. The Swift sample typechecked against `NshAppView`'s `handle` signatures and the Kotlin sample compiled against NSH's own `NshView` sources, both at 0.4.0. The `handle(name, ...)` signatures are unchanged in the 0.7.1 sources (`crates/nsh-platform-ios/swift/NativeShell.swift`, `crates/nsh-platform-android/java/com/longbridge/nsh/NshView.java`); that was checked by reading, not by recompiling. Neither has run inside a host app yet.
 
 ## TypeScript API
 

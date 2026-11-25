@@ -1,5 +1,5 @@
 {
-  "nsh": ">=0.6",
+  "nsh": ">=0.7",
   "exports": {
     "nsh-secure-storage": "tsx/index.ts",
     "nsh-secure-storage/host": "tsx/host.ts",

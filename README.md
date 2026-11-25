@@ -12,7 +12,7 @@ In the app's directory:
 nsh add nsh-secure-storage
 ```
 
-`nsh add` needs NSH 0.7.0 or later: the 0.6.0 and 0.6.1 releases do not have it. In a Rust app, `cargo add nsh-secure-storage` pulls in nsh-core 0.7.
+Needs NSH 0.7.1 or later. In a Rust app, `cargo add nsh-secure-storage` pulls in nsh-core 0.7.
 
 The TSX imports are `nsh-secure-storage`, `nsh-secure-storage/host`, `nsh-secure-storage/memory` and `nsh-secure-storage/rust`.
 
